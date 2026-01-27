@@ -206,7 +206,8 @@ const MOCK_DATA = {
         blobs: makeBlobs(),
     },
     yesterday: {
-        label: 'Yesterday',
+        id: 'yesterday',
+        label: 'Sat 8',
         dateStr: '2025年11月8日 星期日',
         emoji: '😌',
         statusTitle: '昨日回看',
@@ -216,6 +217,38 @@ const MOCK_DATA = {
             { id: 10, r: 45, color: '#60A5FA', label: '疲惫', time: '22:30', note: '洗完澡感觉好多了', source: 'manual' },
             { id: 11, r: 38, color: '#A78BFA', label: '思考', time: '14:00', note: '关于未来的计划...', source: 'chat' },
         ]
+    },
+    thu7: {
+        id: 'thu7',
+        label: 'Thu 7',
+        dateStr: '2025年11月7日 星期五',
+        emoji: '😴',
+        statusTitle: '历史记录',
+        statusText: '那天你好像睡了很久...',
+        whisper: { icon: <Sparkles size={14} />, text: '深度睡眠是最好的治愈' },
+        blobs: [] // Empty date
+    },
+    wed6: {
+        id: 'wed6',
+        label: 'Wed 6',
+        dateStr: '2025年11月6日 星期四',
+        emoji: '⚡️',
+        statusTitle: '历史记录',
+        statusText: '能量满满的一天，效率很高',
+        whisper: { icon: <Radio size={14} />, text: '这是你的高效时刻' },
+        blobs: [
+            { id: 20, r: 40, color: '#FBBF24', label: '心流', time: '10:00', note: '专注工作的感觉真好', source: 'manual' }
+        ]
+    },
+    tue5: {
+        id: 'tue5',
+        label: 'Tue 5',
+        dateStr: '2025年11月5日 星期三',
+        emoji: '🧘‍♂️',
+        statusTitle: '历史记录',
+        statusText: '平静如水，适合静坐',
+        whisper: { icon: <Sparkles size={14} />, text: '内心的宁静最珍贵' },
+        blobs: [] // Empty date
     }
 };
 
@@ -228,7 +261,30 @@ function App() {
     const [showTooltip, setShowTooltip] = useState(false); // Post-onboarding guide
     const [isScanning, setIsScanning] = useState(false); // Device discovery modal
     const [pairingDevice, setPairingDevice] = useState(null); // Current device in setup flow
-    const chatEndRef = useRef(null);
+
+    // 颜色配置表 (Emotion Colors) - 合并为 4 大类，绿色融入“治愈/清新”
+    const EMOTION_COLORS = {
+        '😇': 'linear-gradient(135deg, #A5F3FC, #E0F2FE)', // 治愈 - 蓝
+        '😌': 'linear-gradient(135deg, #A5F3FC, #E0F2FE)',
+        '🌿': 'linear-gradient(135deg, #A5F3FC, #BBF7D0)', // 清新 - 蓝绿
+        '🤩': 'linear-gradient(135deg, #FDE68A, #FEF3C7)', // 能量 - 亮黄
+        '⚡️': 'linear-gradient(135deg, #FDE68A, #FEF3C7)',
+        '😴': 'linear-gradient(135deg, #DDD6FE, #F5F3FF)', // 沉思 - 香芋紫
+        '🧘‍♂️': 'linear-gradient(135deg, #DDD6FE, #F5F3FF)',
+        'default': 'linear-gradient(135deg, #F9A8D4, #FDF2F8)' // 敏感 - 玫瑰粉
+    };
+
+    // Blob 固定色池 (Emoji -> Palette)
+    const BLOB_PALETTES = {
+        '😇': ["#22D3EE", "#38BDF8", "#4ADE80", "#86EFAC"], // 蓝绿混合
+        '😌': ["#22D3EE", "#38BDF8", "#4ADE80", "#86EFAC"],
+        '🌿': ["#22D3EE", "#38BDF8", "#4ADE80", "#86EFAC"],
+        '🤩': ["#FBBF24", "#F59E0B", "#F97316", "#FDE68A"],
+        '⚡️': ["#FBBF24", "#F59E0B", "#F97316", "#FDE68A"],
+        '😴': ["#C084FC", "#D8B4FE", "#A855F7", "#F3E8FF"],
+        '🧘‍♂️': ["#C084FC", "#D8B4FE", "#A855F7", "#F3E8FF"],
+        'default': ["#F472B6", "#FB7185", "#EC4899", "#FBCFE8"]
+    };
 
     // 获取当前展示的数据 (Merge dynamic state for today)
     const currentData = {
@@ -236,25 +292,90 @@ function App() {
         blobs: selectedDate === 'today' ? todayBlobs : MOCK_DATA[selectedDate].blobs
     };
 
+    const headerBg = EMOTION_COLORS[currentData.emoji] || EMOTION_COLORS['default'];
+
     // 切换日期或数量变化时，重置罐头动画（通过 key）
     const jarKey = `${selectedDate}-${currentData.blobs.length}`;
 
-    const [chatMessages, setChatMessages] = useState([
-        { type: 'ai', text: '晚上好！《惊天魔盗团3》好看吗！感觉你的时候很激动耶！' },
-        { type: 'user', text: '哈哈哈哈是的！群像戏真的很燃。' },
-        { type: 'ai', text: '就跟你上次看喜人2里面的群像一样，永远让人热泪盈眶🥹' },
-        { type: 'user', text: '是的你懂我！' },
-    ]);
-
-    // Auto-scroll to bottom when chat opens or messages change
-    useEffect(() => {
-        if (currentPage === 'chat' && chatEndRef.current) {
-            chatEndRef.current.scrollTo({
-                top: chatEndRef.current.scrollHeight,
-                behavior: 'smooth'
-            });
+    const [chatInput, setChatInput] = useState('');
+    const [showEndCard, setShowEndCard] = useState(true); // Simulated: shows based on history
+    const [chatSessions, setChatSessions] = useState([
+        {
+            id: 'legacy-session',
+            timestamp: '2025/12/2 · 4:40 PM',
+            messages: [
+                { type: 'ai', text: '晚上好！《惊天魔盗团3》好看吗！感觉你的时候很激动耶！' },
+                { type: 'user', text: '哈哈哈哈是的！群像戏真的很燃. ' },
+                { type: 'ai', text: '就跟你上次看喜人2里面的群像一样，永远让人热泪盈眶🥹' },
+                { type: 'user', text: '是的你懂我！' },
+            ]
         }
-    }, [currentPage, chatMessages]);
+    ]);
+    const chatEndRef = useRef(null);
+    const messagesEndRef = useRef(null);
+
+    // Auto-scroll to bottom when chat opens or sessions change
+    useEffect(() => {
+        if (currentPage === 'chat') {
+            const scrollToBottom = () => {
+                messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+                // Fallback: manual scroll on container
+                if (chatEndRef.current) {
+                    chatEndRef.current.scrollTop = chatEndRef.current.scrollHeight;
+                }
+            };
+
+            // Initial scroll
+            const timer1 = setTimeout(scrollToBottom, 50);
+            // Stronger scroll after animation likely finishes
+            const timer2 = setTimeout(scrollToBottom, 600);
+
+            return () => {
+                clearTimeout(timer1);
+                clearTimeout(timer2);
+            };
+        }
+    }, [currentPage, chatSessions]);
+
+    const startNewSession = (initialMessages = []) => {
+        const now = new Date();
+        const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const dateStr = `${now.getFullYear()}/${now.getMonth() + 1}/${now.getDate()}`;
+
+        const newSession = {
+            id: Date.now(),
+            timestamp: `${dateStr} · ${timeStr}`,
+            messages: initialMessages
+        };
+
+        setChatSessions(prev => [...prev, newSession]);
+    };
+
+    const handleSendMessage = () => {
+        if (!chatInput.trim()) return;
+
+        const userMsg = { type: 'user', text: chatInput };
+        setChatSessions(prev => {
+            const lastSession = prev[prev.length - 1];
+            const otherSessions = prev.slice(0, -1);
+            return [...otherSessions, { ...lastSession, messages: [...lastSession.messages, userMsg] }];
+        });
+        setChatInput('');
+
+        // Mock a simple AI response after 1s
+        setTimeout(() => {
+            setChatSessions(prev => {
+                const lastSession = prev[prev.length - 1];
+                const otherSessions = prev.slice(0, -1);
+                return [...otherSessions, {
+                    ...lastSession, messages: [...lastSession.messages, {
+                        type: 'ai',
+                        text: '我在听。感觉这个瞬间对你很重要呢，想再多分享一点吗？'
+                    }]
+                }];
+            });
+        }, 1000);
+    };
 
     const handleOnboardingComplete = (firstExpression) => {
         if (firstExpression) {
@@ -372,7 +493,13 @@ function App() {
                             animate={{ opacity: 1, y: 0 }}
                             exit={{ opacity: 0, y: -10 }}
                         >
-                            <div className="home-header">
+                            <div
+                                className="home-header"
+                                style={{
+                                    background: headerBg,
+                                    transition: 'background 0.8s ease'
+                                }}
+                            >
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '12px' }}>
                                     <div>
                                         <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#111827' }}>{currentData.dateStr.split(' ')[0]}</h1>
@@ -388,16 +515,24 @@ function App() {
                                 </div>
                             </div>
 
-                            {/* Time Roller - 放在 Header 下方作为分割线 */}
+                            {/* Time Roller - 动态映射且支持横向滚动 */}
                             <div className="date-roller">
-                                <span className={`roller-item ${selectedDate === 'yesterday' ? 'active' : ''}`} onClick={() => setSelectedDate('yesterday')}>
-                                    Wed 6
-                                </span>
-                                <span className="roller-item">Thu 7</span>
-                                <span className="roller-item">Fri 8</span>
-                                <span className={`roller-item ${selectedDate === 'today' ? 'active' : ''}`} onClick={() => setSelectedDate('today')}>
-                                    Today
-                                </span>
+                                {Object.keys(MOCK_DATA).reverse().map((key) => {
+                                    const data = MOCK_DATA[key];
+                                    const hasData = key === 'today' || data.blobs.length > 0;
+                                    const isActive = selectedDate === key;
+
+                                    return (
+                                        <div
+                                            key={key}
+                                            className={`roller-item ${isActive ? 'active' : ''} ${!hasData ? 'disabled' : 'has-data'}`}
+                                            onClick={() => hasData && setSelectedDate(key)}
+                                        >
+                                            {data.label}
+                                            {isActive && <div className="active-dot" />}
+                                        </div>
+                                    );
+                                })}
                             </div>
 
                             <div className="jar-container">
@@ -467,8 +602,7 @@ function App() {
                                             <button
                                                 onClick={() => {
                                                     const latestBlob = todayBlobs[todayBlobs.length - 1];
-                                                    setChatMessages(prev => [
-                                                        ...prev,
+                                                    startNewSession([
                                                         { type: 'user', text: `关于【${latestBlob.label}】...` },
                                                         { type: 'ai', text: '我在听。想聊聊这个瞬间吗？' }
                                                     ]);
@@ -532,13 +666,13 @@ function App() {
 
                             <div
                                 ref={chatEndRef}
-                                style={{ padding: '24px 24px 130px 24px', paddingTop: '60px', display: 'flex', flexDirection: 'column', overflowY: 'auto', flex: 1, zIndex: 1 }}
+                                style={{ padding: '24px 24px 90px 24px', paddingTop: '60px', display: 'flex', flexDirection: 'column', overflowY: 'auto', flex: 1, zIndex: 1 }}
                             >
 
-                                {/* 模拟更早的历史记录 (Faded) */}
+                                {/* 模拟更早的历史记录 (Faded) - 12/1 */}
                                 <div style={{ opacity: 0.5 }}>
                                     <div style={{ textAlign: 'center', margin: '20px 0', opacity: 0.6 }}>
-                                        <p style={{ fontSize: '12px', color: '#9CA3AF' }}>2 days ago · 8:40 PM</p>
+                                        <p style={{ fontSize: '12px', color: '#9CA3AF' }}>2025/12/1 · 8:40 PM</p>
                                     </div>
                                     <div className="chat-bubble user" style={{ filter: 'grayscale(0.3)' }}>
                                         今天好累啊...
@@ -551,40 +685,66 @@ function App() {
                                     </div>
                                 </div>
 
-                                <div style={{ textAlign: 'center', margin: '30px 0 20px 0', opacity: 0.4 }}>
-                                    <p style={{ fontSize: '12px', color: '#9CA3AF' }}>Yesterday · 10:23 PM</p>
-                                </div>
-
-                                {chatMessages.map((msg, i) => (
-                                    <div key={i} className={`chat-bubble ${msg.type}`}>
-                                        {msg.text}
+                                {/* 今日上午对话 - 12/2 8:40 AM */}
+                                <div style={{ marginTop: '30px' }}>
+                                    <div style={{ textAlign: 'center', margin: '20px 0', opacity: 0.8 }}>
+                                        <p style={{ fontSize: '12px', color: '#9CA3AF', fontWeight: 500 }}>2025/12/2 · 8:40 AM</p>
                                     </div>
-                                ))}
-
-                                {/* Saved Indicator (Timestamp) - Above the card */}
-                                <div className="saved-indicator" style={{ marginBottom: '0' }}>
-                                    <div className="dot" />
-                                    <span>已封存于 22:23 PM</span>
+                                    <div className="chat-bubble ai">
+                                        早安！昨晚睡得怎么样？
+                                    </div>
+                                    <div className="chat-bubble user">
+                                        还行，就是有点不想起床去上班。
+                                    </div>
+                                    <div className="chat-bubble ai">
+                                        理解的，周一总是需要一点额外的动力。新的一周，慢慢来就好。
+                                    </div>
                                 </div>
 
-                                {/* Session End Card Demo */}
-                                <div className="session-end-card" style={{ flexShrink: 0 }}>
+                                {/* 第一段 Session 的 End Card */}
+                                <div className="saved-indicator" style={{ marginBottom: '0', marginTop: '20px' }}>
+                                    <div className="dot" />
+                                    <span>已封存于 9:30 AM</span>
+                                </div>
+
+                                <div className="session-end-card" style={{ flexShrink: 0, marginBottom: '40px' }}>
                                     <div className="end-card-shine" />
                                     <p style={{ fontSize: '15px', color: '#4B5563', lineHeight: '1.6', marginBottom: '0' }}>
-                                        刚才说的这些，我都记下了。<br />不用急着整理，今晚可以试着听首慢歌。
+                                        这周的能量稍微低一点也没关系。<br />记得多喝点温水，下午见。
                                     </p>
                                 </div>
 
+                                {/* Dynamic Sessions */}
+                                {chatSessions.map((session) => (
+                                    <div key={session.id} style={{ marginBottom: '30px' }}>
+                                        <div style={{ textAlign: 'center', margin: '20px 0', opacity: 0.8 }}>
+                                            <p style={{ fontSize: '12px', color: '#9CA3AF', fontWeight: 500 }}>{session.timestamp}</p>
+                                        </div>
+                                        {session.messages.map((msg, i) => (
+                                            <div key={i} className={`chat-bubble ${msg.type}`}>
+                                                {msg.text}
+                                            </div>
+                                        ))}
+                                    </div>
+                                ))}
 
-
+                                {/* Dummy element to anchor scroll to bottom */}
+                                <div ref={messagesEndRef} style={{ height: '1px' }} />
                             </div>
 
                             <div className="chat-input-container">
                                 <div className="voice-trigger chat">
                                     <Mic size={20} />
                                 </div>
-                                <input placeholder="分享你的感受..." />
-                                <button className="send-button">
+                                <input
+                                    placeholder="分享你的感受..."
+                                    value={chatInput}
+                                    onChange={(e) => setChatInput(e.target.value)}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter') handleSendMessage();
+                                    }}
+                                />
+                                <button className="send-button" onClick={handleSendMessage}>
                                     <ChevronRight size={24} />
                                 </button>
                             </div>
@@ -720,8 +880,7 @@ function App() {
                                     {/* Chat about this button */}
                                     <button
                                         onClick={() => {
-                                            setChatMessages(prev => [
-                                                ...prev,
+                                            startNewSession([
                                                 { type: 'user', text: `关于【${selectedBlob.label}】...` },
                                                 { type: 'ai', text: '我在听。想聊聊这个瞬间吗？' }
                                             ]);
