@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
     Heart, MessageCircle, Radio, Signal, Wifi, Battery,
-    ChevronRight, Settings, Send, User, Sparkles, X, ChevronLeft, Mic, Plus
+    ChevronRight, Settings, Send, User, Sparkles, X, ChevronLeft, Mic, Plus, Bell
 } from 'lucide-react'
 
 // --- 物理数据定义 ---
@@ -15,33 +15,63 @@ const makeBlobs = () => ([
     { id: 5, r: 38, color: '#F7AC52', label: '心跳加速💗', time: '10:30', note: '⏺️你这个汇报的什么东西，重新想想…' },
 ]);
 
+const makePearlBlobs = () => {
+    const pearlTints = ['#F9FAFB', '#F0F9FF', '#F5F3FF', '#F0FDF4', '#FFF1F2'];
+    return Array.from({ length: 16 }).map((_, i) => ({
+        id: `pearl-${i}`,
+        r: 10 + Math.random() * 8,
+        color: pearlTints[Math.floor(Math.random() * pearlTints.length)],
+        isPearl: true,
+        label: '',
+        note: '',
+        time: ''
+    }));
+};
+
 const JAR_WIDTH = 340;
 
 const JarPhysics = ({ onSelect, height, blobs }) => {
     const startRef = useRef(performance.now());
+    const [shimmerId, setShimmerId] = useState(null);
     const mouthX = JAR_WIDTH / 2;
     const mouthRange = 36;
-    const [items] = useState(() => (blobs || makeBlobs()).map((b, i) => ({
-        ...b,
-        x: mouthX + (Math.random() * 2 - 1) * mouthRange,
-        y: -30 - i * 40,
-        vx: (Math.random() * 1.2 - 0.6),
-        vy: 0,
-        sx: 1,
-        sy: 1,
-        tsx: 1,
-        tsy: 1,
-        active: false,
-        release: i * 250,
-        settled: false,
-    })));
+    const [items] = useState(() => {
+        const combined = [...(blobs || []), ...makePearlBlobs()];
+        return combined.map((b, i) => ({
+            ...b,
+            x: mouthX + (Math.random() * 2 - 1) * (b.isPearl ? JAR_WIDTH / 2 : mouthRange),
+            y: -30 - i * 30, // Stack them up
+            vx: (Math.random() * 1.2 - 0.6),
+            vy: 0,
+            sx: 1,
+            sy: 1,
+            tsx: 1,
+            tsy: 1,
+            active: false,
+            release: i * 100, // Spread out the drops further for a gentler feel
+            settled: false,
+        }));
+    });
     const raf = useRef(null);
     const [, setFrame] = useState(0);
 
+    // Shimmering Nudge Logic
     useEffect(() => {
-        const g = 0.38;
-        const damp = 0.985;
-        const friction = 0.982;
+        const interval = setInterval(() => {
+            const undiscussed = items.filter(it => !it.isPearl && !it.isDiscussed);
+            if (undiscussed.length > 0) {
+                const target = undiscussed[Math.floor(Math.random() * undiscussed.length)];
+                setShimmerId(target.id);
+                setTimeout(() => setShimmerId(null), 2000); // Shimmer for 2 seconds
+            }
+        }, 8000); // Every 8 seconds
+        return () => clearInterval(interval);
+    }, [items]);
+
+    useEffect(() => {
+        const g = 0.34; // Reduced gravity for floatier feel
+        const damp = 0.96; // Increased drag/damping
+        const friction = 0.95;
         const settleEps = 0.02;
 
         const step = () => {
@@ -95,7 +125,7 @@ const JarPhysics = ({ onSelect, height, blobs }) => {
                         const rvx = b.vx - a.vx; const rvy = b.vy - a.vy;
                         const vn = rvx * nx + rvy * ny;
                         if (vn < 0) {
-                            const imp = -1.05 * vn;
+                            const imp = -0.7 * vn; // Reduced bounciness for a 'softer' impact
                             a.vx -= imp * nx * 0.5; a.vy -= imp * ny * 0.5;
                             b.vx += imp * nx * 0.5; b.vy += imp * ny * 0.5;
                         }
@@ -176,16 +206,49 @@ const JarPhysics = ({ onSelect, height, blobs }) => {
                         <g
                             key={it.id}
                             transform={`translate(${it.x},${it.y}) scale(${it.sx},${it.sy})`}
-                            onClick={() => onSelect(it)}
-                            style={{ cursor: 'pointer' }}
+                            onClick={() => !it.isPearl && onSelect(it)}
+                            style={{ cursor: it.isPearl ? 'default' : 'pointer' }}
                         >
                             <defs>
-                                <radialGradient id={`grad-${i}`} cx="35%" cy="35%" r="65%">
-                                    <stop offset="0%" stopColor={it.color} stopOpacity="0.95" />
-                                    <stop offset="100%" stopColor={it.color} stopOpacity="0.7" />
+                                <radialGradient id={`grad-${it.id}`} cx="35%" cy="35%" r="65%">
+                                    <stop offset="0%" stopColor={it.isDiscussed ? "#FFFFFF" : it.color} stopOpacity={it.isPearl ? "0.9" : (it.isDiscussed ? "0.7" : "0.95")} />
+                                    <stop offset="100%" stopColor={it.color} stopOpacity={it.isPearl ? "0.6" : (it.isDiscussed ? "0.3" : "0.7")} />
                                 </radialGradient>
                             </defs>
-                            <ellipse rx={it.r * 1.05} ry={it.r * 0.95} fill={`url(#grad-${i})`} />
+                            <ellipse
+                                rx={it.r * 1.05}
+                                ry={it.r * 0.95}
+                                fill={`url(#grad-${it.id})`}
+                                stroke={it.isPearl ? "rgba(255,255,255,0.4)" : (it.isDiscussed ? "rgba(255,255,255,0.6)" : "none")}
+                                strokeWidth={it.isPearl ? "0.5" : (it.isDiscussed ? "2" : "0")}
+                                style={{ transition: 'opacity 0.5s ease', opacity: it.isDiscussed ? 0.6 : 1 }}
+                            />
+                            {/* Shimmer Sparkles */}
+                            {shimmerId === it.id && (
+                                <g transform="scale(0.8)">
+                                    <motion.circle
+                                        cx={-it.r * 0.4} cy={-it.r * 0.2} r="3" fill="white"
+                                        initial={{ opacity: 0, scale: 0 }}
+                                        animate={{ opacity: [0, 1, 0], scale: [0, 1.2, 0] }}
+                                        transition={{ duration: 1, repeat: 1 }}
+                                    />
+                                    <motion.circle
+                                        cx={it.r * 0.3} cy={it.r * 0.3} r="2" fill="white"
+                                        initial={{ opacity: 0, scale: 0 }}
+                                        animate={{ opacity: [0, 1, 0], scale: [0, 1.5, 0] }}
+                                        transition={{ duration: 1, delay: 0.5, repeat: 1 }}
+                                    />
+                                </g>
+                            )}
+                            {it.isPearl && (
+                                <ellipse
+                                    cx={-it.r * 0.3}
+                                    cy={-it.r * 0.3}
+                                    rx={it.r * 0.3}
+                                    ry={it.r * 0.2}
+                                    fill="rgba(255, 255, 255, 0.6)"
+                                />
+                            )}
                         </g>
                     ))}
                 </g>
@@ -257,10 +320,153 @@ function App() {
     const [selectedBlob, setSelectedBlob] = useState(null);
     const [selectedDate, setSelectedDate] = useState('today');
     const [onboardingStep, setOnboardingStep] = useState(0); // 0: Welcome, 1: Expression, 2: Done
-    const [todayBlobs, setTodayBlobs] = useState(makeBlobs()); // Dynamic state for today's blobs
+    const [todayBlobs, setTodayBlobs] = useState([]); // Start with empty for fresh onboarding
+    // const [todayBlobs, setTodayBlobs] = useState(makeBlobs()); // 原本的今日案例数据
     const [showTooltip, setShowTooltip] = useState(false); // Post-onboarding guide
     const [isScanning, setIsScanning] = useState(false); // Device discovery modal
     const [pairingDevice, setPairingDevice] = useState(null); // Current device in setup flow
+    const [onboardingInput, setOnboardingInput] = useState(''); // Textarea content for onboarding/manual
+    const [isLoggedIn, setIsLoggedIn] = useState(false);
+    const [phoneNumber, setPhoneNumber] = useState('');
+    const [showLogin, setShowLogin] = useState(true);
+    const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+    const [discussedIds, setDiscussedIds] = useState(new Set());
+    const [pendingPush, setPendingPush] = useState(null);
+
+    // 语音输入状态 (Global Voice State)
+    const [isVoiceActive, setIsVoiceActive] = useState(false);
+    const [voiceContext, setVoiceContext] = useState(null); // 'home' | 'chat' | 'onboarding'
+    const [voiceVolume, setVoiceVolume] = useState(0); // 0-100 for animation
+    const [isProcessing, setIsProcessing] = useState(false); // Whether waiting for final STT
+    const [interimText, setInterimText] = useState(''); // Real-time transcribed text
+    const audioContextRef = useRef(null);
+    const analyserRef = useRef(null);
+    const animationFrameRef = useRef(null);
+    const recognitionRef = useRef(null);
+    const initialTextRef = useRef(''); // 记录录音开始前的文字
+
+    // 启动语音监控与识别
+    const startVoice = async (context) => {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            setVoiceContext(context);
+            setIsVoiceActive(true);
+            setIsProcessing(false);
+            setInterimText('');
+
+            // 记录当前输入框的内容，作为“底色”
+            initialTextRef.current = context === 'chat' ? chatInput : onboardingInput;
+
+            // 1. Audio Visualizer Setup
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const analyser = audioContext.createAnalyser();
+            const source = audioContext.createMediaStreamSource(stream);
+            source.connect(analyser);
+            analyser.fftSize = 256;
+            audioContextRef.current = audioContext;
+            analyserRef.current = analyser;
+
+            const bufferLength = analyser.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
+            const updateVolume = () => {
+                analyser.getByteFrequencyData(dataArray);
+                let sum = 0;
+                for (let i = 0; i < bufferLength; i++) sum += dataArray[i];
+                setVoiceVolume(sum / bufferLength);
+                animationFrameRef.current = requestAnimationFrame(updateVolume);
+            };
+            updateVolume();
+
+            // 2. Real Speech Recognition Setup
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            if (SpeechRecognition) {
+                const recognition = new SpeechRecognition();
+                recognition.lang = 'zh-CN';
+                recognition.interimResults = true; // 开启实时转写反馈
+                recognition.maxAlternatives = 1;
+                recognition.continuous = true;
+
+                recognition.onresult = (event) => {
+                    let sessionTranscript = '';
+                    for (let i = 0; i < event.results.length; ++i) {
+                        sessionTranscript += event.results[i][0].transcript;
+                    }
+
+                    // 组合：录音前的文字 + 本次录音的所有文字 (Cumulative for this session)
+                    const updatedText = initialTextRef.current + sessionTranscript;
+
+                    if (context === 'chat') {
+                        setChatInput(updatedText);
+                    } else if (context === 'onboarding') {
+                        setOnboardingInput(updatedText);
+                    }
+
+                    // 如果有 final 结果，可以考虑自动停止（可选），但我们现在是长按逻辑，靠 onPointerUp 停止
+                };
+
+                recognition.onerror = (event) => {
+                    console.error("Speech recognition error:", event.error);
+                    setIsVoiceActive(false);
+                };
+
+                recognition.start();
+                recognitionRef.current = recognition;
+            } else {
+                console.warn("Speech recognition not supported in this browser.");
+            }
+        } catch (err) {
+            console.error("Microphone access denied:", err);
+            alert("请授予麦克风权限以使用语音功能");
+        }
+    };
+
+    // 停止语音监控并结束识别
+    const stopVoice = () => {
+        setIsVoiceActive(false);
+        if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+        if (audioContextRef.current) audioContextRef.current.close();
+
+        if (recognitionRef.current) {
+            recognitionRef.current.stop();
+            recognitionRef.current = null;
+        }
+    };
+
+    const handleVoiceSuccess = (text) => {
+        if (voiceContext === 'chat') {
+            setChatInput(text);
+        } else if (voiceContext === 'onboarding') {
+            setOnboardingInput(text);
+        } else if (voiceContext === 'home') {
+            // Home context originally mapped here, but now we use transcription in onboarding
+            const newBlob = {
+                id: Date.now(),
+                r: 38 + Math.random() * 8,
+                color: BLOB_PALETTES[currentData.emoji]?.[0] || BLOB_PALETTES['default'][0],
+                label: '语音心情',
+                time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                note: text,
+                source: 'manual'
+            };
+            setTodayBlobs(prev => [...prev, newBlob]);
+        }
+    };
+
+    // 长按录音处理器 (Long-press handlers)
+    const micHandlers = (context) => ({
+        onPointerDown: (e) => {
+            e.preventDefault();
+            startVoice(context);
+        },
+        onPointerUp: (e) => {
+            e.preventDefault();
+            stopVoice();
+        },
+        onPointerLeave: (e) => {
+            if (isVoiceActive) stopVoice();
+        },
+        onContextMenu: (e) => e.preventDefault(), // 禁用右键菜单防止干扰长按
+    });
 
     // 颜色配置表 (Emotion Colors) - 合并为 4 大类，绿色融入“治愈/清新”
     const EMOTION_COLORS = {
@@ -289,7 +495,10 @@ function App() {
     // 获取当前展示的数据 (Merge dynamic state for today)
     const currentData = {
         ...MOCK_DATA[selectedDate],
-        blobs: selectedDate === 'today' ? todayBlobs : MOCK_DATA[selectedDate].blobs
+        blobs: (selectedDate === 'today' ? todayBlobs : MOCK_DATA[selectedDate].blobs).map(b => ({
+            ...b,
+            isDiscussed: discussedIds.has(b.id)
+        }))
     };
 
     const headerBg = EMOTION_COLORS[currentData.emoji] || EMOTION_COLORS['default'];
@@ -299,18 +508,7 @@ function App() {
 
     const [chatInput, setChatInput] = useState('');
     const [showEndCard, setShowEndCard] = useState(true); // Simulated: shows based on history
-    const [chatSessions, setChatSessions] = useState([
-        {
-            id: 'legacy-session',
-            timestamp: '2025/12/2 · 4:40 PM',
-            messages: [
-                { type: 'ai', text: '晚上好！《惊天魔盗团3》好看吗！感觉你的时候很激动耶！' },
-                { type: 'user', text: '哈哈哈哈是的！群像戏真的很燃. ' },
-                { type: 'ai', text: '就跟你上次看喜人2里面的群像一样，永远让人热泪盈眶🥹' },
-                { type: 'user', text: '是的你懂我！' },
-            ]
-        }
-    ]);
+    const [chatSessions, setChatSessions] = useState([]);
     const chatEndRef = useRef(null);
     const messagesEndRef = useRef(null);
 
@@ -351,6 +549,19 @@ function App() {
         setChatSessions(prev => [...prev, newSession]);
     };
 
+    // 切换到对话页时的自动引导 (Proactive Greeting)
+    useEffect(() => {
+        if (currentPage === 'chat' && chatSessions.length === 0) {
+            // 稍作延迟，等页面切入动画完成
+            const timer = setTimeout(() => {
+                startNewSession([
+                    { type: 'ai', text: '嗨！我是 Mochi。在这个安静的空间里，我会一直陪着你。今天过得怎么样？' }
+                ]);
+            }, 800);
+            return () => clearTimeout(timer);
+        }
+    }, [currentPage, chatSessions]);
+
     const handleSendMessage = () => {
         if (!chatInput.trim()) return;
 
@@ -377,6 +588,36 @@ function App() {
         }, 1000);
     };
 
+    // 模拟推送通知逻辑 (Push Notification Simulation)
+    useEffect(() => {
+        if (isLoggedIn && currentPage === 'home' && !pendingPush) {
+            const timer = setTimeout(() => {
+                const undiscussed = todayBlobs.filter(b => !discussedIds.has(b.id));
+                if (undiscussed.length > 0) {
+                    const target = undiscussed[Math.floor(Math.random() * undiscussed.length)];
+                    setPendingPush({
+                        id: target.id,
+                        title: 'Mochi 刚才在想...',
+                        body: `关于【${target.label}】的那个瞬间，想听你多说几句点... ✨`,
+                        blob: target
+                    });
+                }
+            }, 12000); // 12 seconds
+            return () => clearTimeout(timer);
+        }
+    }, [isLoggedIn, currentPage, todayBlobs, discussedIds, pendingPush]);
+
+    const handleLogout = () => {
+        setIsLoggedIn(false);
+        setCurrentPage('home');
+        setShowLogin(true);
+        // Reset to fresh state
+        setPhoneNumber('');
+        setTodayBlobs([]);
+        setOnboardingStep(0);
+        setChatSessions([]);
+    };
+
     const handleOnboardingComplete = (firstExpression) => {
         if (firstExpression) {
             // Add new blob to the jar
@@ -391,25 +632,97 @@ function App() {
             };
             setTodayBlobs(prev => [...prev, newBlob]);
 
-            // Show post-onboarding tooltip
-            setShowTooltip(true);
-            setTimeout(() => setShowTooltip(false), 8000);
+            // 仅在真实没有碎片（第一个）时弹出恭喜弹窗
+            // 延迟 2 秒，让用户先看到首页和第一个 blob 掉落
+            if (todayBlobs.length === 0) {
+                setTimeout(() => {
+                    setShowTooltip(true);
+                    setTimeout(() => setShowTooltip(false), 8000);
+                }, 2000); // 2 秒延迟
+            }
         }
         setOnboardingStep(2); // 完成
         // Stay on current page (Home) instead of switching to chat
     };
 
-    if (onboardingStep < 2) {
+    // 手机号登录页面 (Login View)
+    if (!isLoggedIn) {
         return (
-            <div className="app-container">
+            <div className="app-container" style={{ background: 'var(--grad-header)' }}>
+                <div className="nav-mimic" />
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '60px 32px' }}>
+                    <motion.div
+                        className="onboarding-icon"
+                        animate={{
+                            y: [0, -10, 0],
+                        }}
+                        transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
+                        style={{ fontSize: '72px', marginBottom: '40px' }}
+                    >
+                        ☁️
+                    </motion.div>
+
+                    <h1 className="onboarding-title" style={{ fontSize: '32px' }}>你好，Mochi</h1>
+                    <p className="onboarding-desc" style={{ marginBottom: '60px', textAlign: 'center' }}>在这，放下一整天的情绪</p>
+
+                    <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                        <div style={{ position: 'relative' }}>
+                            <div style={{
+                                position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)',
+                                color: '#9CA3AF', fontSize: '15px'
+                            }}>+86</div>
+                            <input
+                                placeholder="输入手机号"
+                                value={phoneNumber}
+                                onChange={(e) => setPhoneNumber(e.target.value)}
+                                style={{
+                                    width: '100%',
+                                    padding: '18px 18px 18px 60px',
+                                    borderRadius: '30px',
+                                    border: 'none',
+                                    background: 'rgba(255, 255, 255, 0.7)',
+                                    backdropFilter: 'blur(10px)',
+                                    WebkitBackdropFilter: 'blur(10px)',
+                                    fontSize: '16px',
+                                    outline: 'none',
+                                    color: '#1F2937'
+                                }}
+                            />
+                        </div>
+
+                        <button
+                            className="next-button"
+                            onClick={() => {
+                                if (phoneNumber.length >= 11) {
+                                    setIsLoggedIn(true);
+                                    setOnboardingStep(0);
+                                } else {
+                                    alert('请输入有效的手机号');
+                                }
+                            }}
+                            style={{ width: '100%', padding: '18px' }}
+                        >
+                            开启旅程
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // Onboarding 组件 (强制显示，直到用户完成 Step 2)
+    if (onboardingStep < 2 && currentPage === 'home') {
+        return (
+            <div className="app-container" style={{ background: 'var(--grad-header)' }}>
+                <div className="nav-mimic" />
                 <AnimatePresence mode="wait">
                     {onboardingStep === 0 && (
                         <motion.div
                             key="welcome"
                             className="onboarding-container"
-                            initial={{ opacity: 0 }}
-                            animate={{ opacity: 1 }}
-                            exit={{ opacity: 0, scale: 0.95 }}
+                            initial={{ opacity: 0, y: 20 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, x: -20 }}
                         >
                             <div className="onboarding-content">
                                 <div className="onboarding-icon">🌱</div>
@@ -434,7 +747,7 @@ function App() {
                             <div className="onboarding-content" style={{ width: '100%' }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                     <h1 className="onboarding-title" style={{ fontSize: '24px', marginBottom: 0 }}>现在的感受...</h1>
-                                    <span onClick={() => { setOnboardingStep(2); setCurrentPage('chat'); }} style={{ color: '#9CA3AF', fontSize: '14px', cursor: 'pointer' }}>跳过</span>
+                                    <span onClick={() => { setTodayBlobs(prev => [...prev]); setOnboardingStep(2); }} style={{ color: '#9CA3AF', fontSize: '14px', cursor: 'pointer' }}>跳过</span>
                                 </div>
                                 <div className="expression-input-area">
                                     <div style={{ position: 'relative' }}>
@@ -442,14 +755,19 @@ function App() {
                                             className="expression-input"
                                             placeholder="累 / 开心 / 有点乱..."
                                             autoFocus
+                                            value={onboardingInput}
+                                            onChange={(e) => setOnboardingInput(e.target.value)}
                                             onKeyDown={(e) => {
                                                 if (e.key === 'Enter' && !e.shiftKey) {
                                                     e.preventDefault();
-                                                    handleOnboardingComplete(e.target.value);
+                                                    handleOnboardingComplete(onboardingInput);
                                                 }
                                             }}
                                         />
-                                        <div className="voice-trigger onboarding">
+                                        <div
+                                            className={`voice-trigger onboarding ${isVoiceActive && voiceContext === 'onboarding' ? 'recording' : ''}`}
+                                            {...micHandlers('onboarding')}
+                                        >
                                             <Mic size={20} />
                                         </div>
                                         <p className="placeholder-text" style={{ bottom: '-30px', textAlign: 'center' }}>模糊一点也没关系</p>
@@ -457,10 +775,7 @@ function App() {
                                     <button
                                         className="next-button"
                                         style={{ width: '100%', marginTop: '60px' }}
-                                        onClick={(e) => {
-                                            const input = e.target.parentElement.querySelector('textarea').value;
-                                            handleOnboardingComplete(input);
-                                        }}
+                                        onClick={() => handleOnboardingComplete(onboardingInput)}
                                     >
                                         放入情绪罐头
                                     </button>
@@ -539,15 +854,20 @@ function App() {
                                 <JarPhysics key={jarKey} height={360} onSelect={setSelectedBlob} blobs={currentData.blobs} />
                             </div>
 
-                            {/* Home FAB - Manual Entry */}
-                            <motion.button
-                                className="home-fab"
-                                whileHover={{ scale: 1.05 }}
-                                whileTap={{ scale: 0.95 }}
-                                onClick={() => setOnboardingStep(1)} // Reuse input flow
-                            >
-                                <Plus size={24} color="#6B7280" />
-                            </motion.button>
+                            <div style={{ position: 'absolute', bottom: '96px', right: '24px', zIndex: 100 }}>
+                                {/* Manual Entry Only */}
+                                <motion.button
+                                    className="home-fab"
+                                    whileHover={{ scale: 1.05 }}
+                                    whileTap={{ scale: 0.95 }}
+                                    onClick={() => {
+                                        setOnboardingInput('');
+                                        setOnboardingStep(1);
+                                    }}
+                                >
+                                    <Plus size={24} color="#6B7280" />
+                                </motion.button>
+                            </div>
 
                             {/* Post-Onboarding Modal */}
                             {showTooltip && (
@@ -557,9 +877,10 @@ function App() {
                                     style={{ zIndex: 300 }}
                                 >
                                     <motion.div
-                                        initial={{ opacity: 0, scale: 0.9, y: 20 }}
-                                        animate={{ opacity: 1, scale: 1, y: 0 }}
-                                        exit={{ opacity: 0, scale: 0.9, y: 20 }}
+                                        initial={{ opacity: 0, y: 100 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        exit={{ opacity: 0, y: 100 }}
+                                        transition={{ type: 'spring', damping: 30, stiffness: 180, mass: 1.2 }}
                                         onClick={(e) => e.stopPropagation()}
                                         style={{
                                             background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.95), rgba(252, 231, 243, 0.9))',
@@ -733,7 +1054,10 @@ function App() {
                             </div>
 
                             <div className="chat-input-container">
-                                <div className="voice-trigger chat">
+                                <div
+                                    className={`voice-trigger chat ${isVoiceActive && voiceContext === 'chat' ? 'recording' : ''}`}
+                                    {...micHandlers('chat')}
+                                >
                                     <Mic size={20} />
                                 </div>
                                 <input
@@ -758,9 +1082,39 @@ function App() {
                             animate={{ opacity: 1, y: 0 }}
                             exit={{ opacity: 0, y: -10 }}
                         >
-                            <div className="device-banner">
-                                <h1 style={{ fontSize: '28px', fontWeight: 300, marginBottom: '4px' }}>我的设备</h1>
-                                <p style={{ fontSize: '14px', opacity: 0.8 }}>Mochi 生态系统</p>
+                            <div className="device-banner" style={{ paddingBottom: '32px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                                    <div>
+                                        <h1 style={{ fontSize: '28px', fontWeight: 300, marginBottom: '4px' }}>我的环境</h1>
+                                        <p style={{ fontSize: '14px', opacity: 0.8 }}>和 Mochi 的第 1 天</p>
+                                    </div>
+                                    <div style={{ position: 'relative' }}>
+                                        <div
+                                            onClick={() => setShowLogoutConfirm(true)}
+                                            style={{
+                                                width: '52px', height: '52px', borderRadius: '50%', background: 'rgba(255,255,255,0.25)',
+                                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                fontSize: '22px', border: '2px solid rgba(255,255,255,0.3)',
+                                                cursor: 'pointer'
+                                            }}
+                                            title="点击退出登录"
+                                        >👤</div>
+                                        <div style={{
+                                            position: 'absolute',
+                                            bottom: '-4px',
+                                            right: '-4px',
+                                            background: 'rgba(255,255,255,0.9)',
+                                            color: 'var(--primary)',
+                                            fontSize: '10px',
+                                            fontWeight: 'bold',
+                                            padding: '2px 6px',
+                                            borderRadius: '10px',
+                                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                                        }}>
+                                            {phoneNumber.slice(-4) || '3721'}
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
 
                             <div
@@ -853,7 +1207,7 @@ function App() {
 
             <AnimatePresence>
                 {selectedBlob && (
-                    <div className="modal-overlay" onClick={() => setSelectedBlob(null)}>
+                    <div key="selected-blob" className="modal-overlay" onClick={() => setSelectedBlob(null)}>
                         <motion.div
                             className="modal-content"
                             initial={{ opacity: 0, scale: 0.9, y: 20 }}
@@ -884,6 +1238,7 @@ function App() {
                                                 { type: 'user', text: `关于【${selectedBlob.label}】...` },
                                                 { type: 'ai', text: '我在听。想聊聊这个瞬间吗？' }
                                             ]);
+                                            setDiscussedIds(prev => new Set([...prev, selectedBlob.id]));
                                             setSelectedBlob(null);
                                             setCurrentPage('chat');
                                         }}
@@ -917,7 +1272,7 @@ function App() {
                 )}
 
                 {isScanning && (
-                    <div className="modal-overlay" onClick={() => setIsScanning(false)}>
+                    <div key="scanning" className="modal-overlay" onClick={() => setIsScanning(false)}>
                         <motion.div
                             className="modal-content"
                             initial={{ opacity: 0, y: 100 }}
@@ -997,7 +1352,7 @@ function App() {
                 )}
 
                 {pairingDevice && pairingDevice.type === 'soft' && (
-                    <div className="modal-overlay">
+                    <div key="pairing" className="modal-overlay">
                         <motion.div
                             className="modal-content"
                             initial={{ opacity: 0, scale: 0.9 }}
@@ -1053,6 +1408,111 @@ function App() {
                             </div>
                         </motion.div>
                     </div>
+                )}
+
+                {showLogoutConfirm && (
+                    <div key="logout-confirm" className="modal-overlay" onClick={() => setShowLogoutConfirm(false)} style={{ zIndex: 1000 }}>
+                        <motion.div
+                            className="modal-content"
+                            initial={{ opacity: 0, scale: 0.9, y: 20 }}
+                            animate={{ opacity: 1, scale: 1, y: 0 }}
+                            exit={{ opacity: 0, scale: 0.9, y: 20 }}
+                            onClick={(e) => e.stopPropagation()}
+                            style={{ padding: '32px', textAlign: 'center' }}
+                        >
+                            <div style={{ fontSize: '48px', marginBottom: '16px' }}>👋</div>
+                            <h2 style={{ fontSize: '20px', fontWeight: 600, marginBottom: '8px' }}>要暂时离开吗？</h2>
+                            <p style={{ fontSize: '14px', color: '#6B7280', marginBottom: '24px', lineHeight: 1.6 }}>
+                                Mochi 会在这里等你回来。
+                            </p>
+
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                                <button
+                                    onClick={() => {
+                                        setShowLogoutConfirm(false);
+                                        handleLogout();
+                                    }}
+                                    style={{
+                                        background: '#FEE2E2',
+                                        color: '#EF4444',
+                                        padding: '16px',
+                                        borderRadius: '16px',
+                                        border: 'none',
+                                        fontWeight: 600,
+                                        width: '100%'
+                                    }}
+                                >
+                                    确定退出
+                                </button>
+                                <button
+                                    onClick={() => setShowLogoutConfirm(false)}
+                                    style={{
+                                        background: '#F3F4F6',
+                                        color: '#4B5563',
+                                        padding: '16px',
+                                        borderRadius: '16px',
+                                        border: 'none',
+                                        fontWeight: 600,
+                                        width: '100%'
+                                    }}
+                                >
+                                    再等等
+                                </button>
+                            </div>
+                        </motion.div>
+                    </div>
+                )}
+
+                {/* Simulated Push Notification Banner */}
+                {pendingPush && (
+                    <motion.div
+                        key="push-banner"
+                        initial={{ opacity: 0, y: -100 }}
+                        animate={{ opacity: 1, y: 16 }}
+                        exit={{ opacity: 0, y: -100 }}
+                        onClick={() => {
+                            startNewSession([
+                                { type: 'ai', text: `嗨！看到你刚才记录了【${pendingPush.blob.label}】，那个瞬间现在感觉好些了吗？` }
+                            ]);
+                            setDiscussedIds(prev => new Set([...prev, pendingPush.id]));
+                            setPendingPush(null);
+                            setCurrentPage('chat');
+                        }}
+                        style={{
+                            position: 'absolute',
+                            top: '8px', left: '8px', right: '8px',
+                            background: 'rgba(255, 255, 255, 0.95)',
+                            backdropFilter: 'blur(10px)',
+                            padding: '12px 16px',
+                            borderRadius: '16px',
+                            boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
+                            display: 'flex',
+                            gap: '12px',
+                            alignItems: 'center',
+                            zIndex: 3000,
+                            cursor: 'pointer',
+                            border: '1px solid rgba(0,0,0,0.05)'
+                        }}
+                    >
+                        <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: 'linear-gradient(135deg, #A78BFA, #818CF8)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white' }}>
+                            <Bell size={20} />
+                        </div>
+                        <div style={{ flex: 1 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span style={{ fontSize: '12px', fontWeight: 600, color: '#1F2937' }}>{pendingPush.title}</span>
+                                <span style={{ fontSize: '10px', color: '#9CA3AF' }}>现在</span>
+                            </div>
+                            <p style={{ fontSize: '13px', color: '#4B5563', marginTop: '2px', lineHeight: 1.4 }}>{pendingPush.body}</p>
+                        </div>
+                        <X
+                            size={16}
+                            color="#9CA3AF"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setPendingPush(null);
+                            }}
+                        />
+                    </motion.div>
                 )}
             </AnimatePresence>
         </div>
