@@ -1,0 +1,357 @@
+import React, { useEffect, useRef, useState } from 'react';
+import { Heart, MessageCircle, Radio } from 'lucide-react';
+
+const WIDTH = 360;
+
+const makeBlobs = () => ([
+  { id: 0, r: 42, color: '#F7AC52', label: '心跳加速💗', time: '12:20', note: '⏺️ 好球！！' },
+  { id: 1, r: 38, color: '#FCA5A5', label: '愉悦', time: '13:00', note: '终于打羽毛球了！好爽～' },
+  { id: 2, r: 40, color: '#34D399', label: '放松', time: '14:00', note: '小小喝咖啡放松一下☕️' },
+  { id: 3, r: 44, color: '#60A5FA', label: 'emo', time: '10:00', note: '周一又上班了' },
+  { id: 4, r: 40, color: '#A78BFA', label: '紧张', time: '11:00', note: '今天好像有点紧张。老板不太满意哦' },
+  { id: 5, r: 38, color: '#F7AC52', label: '心跳加速💗', time: '10:30', note: '⏺️你这个汇报的什么东西，重新想想…' },
+]);
+
+function runtimeTests() {
+  const bs = makeBlobs();
+  console.assert(Array.isArray(bs) && bs.length === 6, 'makeBlobs should return 6 blobs');
+  console.assert(bs.every(b => typeof b.color === 'string' && typeof b.r === 'number'), 'each blob has color and radius');
+}
+runtimeTests();
+
+const MochiApp = () => {
+  const [currentPage, setCurrentPage] = useState<'home' | 'chat' | 'device'>('home');
+  return (
+    <div className="w-full h-screen bg-gradient-to-b from-purple-50/20 to-pink-50/10 flex flex-col max-w-md mx-auto relative">
+      {currentPage === 'home' && <HomePage />}
+      {currentPage === 'chat' && <ChatPage />}
+      {currentPage === 'device' && <DevicePage />}
+
+      <div className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white/80 backdrop-blur-xl border-t border-gray-200/50 px-8 py-4 rounded-t-3xl z-30">
+        <div className="flex items-center justify-around">
+          <button onClick={() => setCurrentPage('home')} className={`flex flex-col items-center gap-1.5 transition-all ${currentPage === 'home' ? 'text-purple-400 scale-110' : 'text-gray-400'}`}>
+            <Heart className="w-6 h-6" fill={currentPage === 'home' ? 'currentColor' : 'none'} strokeWidth={1.5} />
+            <span className="text-xs font-light">情绪</span>
+          </button>
+          <button onClick={() => setCurrentPage('chat')} className={`flex flex-col items-center gap-1.5 transition-all ${currentPage === 'chat' ? 'text-purple-400 scale-110' : 'text-gray-400'}`}>
+            <MessageCircle className="w-6 h-6" fill={currentPage === 'chat' ? 'currentColor' : 'none'} strokeWidth={1.5} />
+            <span className="text-xs font-light">对话</span>
+          </button>
+          <button onClick={() => setCurrentPage('device')} className={`flex flex-col items-center gap-1.5 transition-all ${currentPage === 'device' ? 'text-purple-400 scale-110' : 'text-gray-400'}`}>
+            <Radio className="w-6 h-6" strokeWidth={1.5} />
+            <span className="text-xs font-light">设备</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const useJarHeight = () => {
+  const [h, setH] = useState(320);
+  useEffect(() => {
+    const calc = () => {
+      const nav = 96; // bottom nav + input 预留
+      const header = 240; // 顶部区域大致高度
+      const avail = Math.max(240, Math.min(340, window.innerHeight - nav - header - 40));
+      setH(avail);
+    };
+    calc();
+    window.addEventListener('resize', calc);
+    return () => window.removeEventListener('resize', calc);
+  }, []);
+  return h;
+};
+
+const HomePage: React.FC = () => {
+  const [showModal, setShowModal] = useState(false);
+  const [selected, setSelected] = useState<any>(null);
+  const jarH = useJarHeight();
+  return (
+    <div className="flex-1 overflow-y-auto pb-28">
+      <div className="bg-gradient-to-br from-[#F4E6FF] via-[#FDE2E4] to-[#FFE5CF] p-6 rounded-b-[2rem] border-b border-white/60">
+        <div className="flex items-end justify-between">
+          <div>
+            <h1 className="text-2xl font-medium text-gray-900 mb-1">今日情绪</h1>
+            <p className="text-gray-600 text-xs">2025年11月9日 星期一</p>
+          </div>
+          <div className="text-4xl">😇</div>
+        </div>
+        <div className="mt-4 bg-white/70 rounded-2xl p-4 border border-white/60">
+          <p className="text-gray-500 text-xs mb-1">今日状态</p>
+          <p className="text-lg text-gray-900">情绪起起伏伏，你始终能把自己接住</p>
+        </div>
+      </div>
+      <div className="px-6 pt-5">
+        <h2 className="text-base font-medium text-gray-700 mb-4">情绪罐头</h2>
+        <JarPhysics height={jarH} onSelect={(b: any) => { setSelected(b); setShowModal(true); }} />
+      </div>
+      {showModal && selected && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/10" onClick={() => setShowModal(false)} />
+          <div className="relative z-50 bg-white/90 backdrop-blur-xl rounded-2xl shadow-xl border border-gray-100 w-[82%] max-w-sm p-5">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-full" style={{ backgroundColor: `${selected.color}30` }} />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between">
+                  <p className="text-base text-gray-800">{selected.label}</p>
+                  <button className="text-gray-400 hover:text-gray-600" onClick={() => setShowModal(false)}>✕</button>
+                </div>
+                <p className="text-[11px] text-gray-500 mt-0.5">{selected.time}</p>
+                <p className="text-sm text-gray-700 mt-2 leading-relaxed">{selected.note}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const JarPhysics: React.FC<{ onSelect: (b: any) => void; height: number }> = ({ onSelect, height }) => {
+  const HEIGHT = height;
+  const startRef = useRef(performance.now());
+  const mouthX = WIDTH / 2;
+  const mouthRange = 36; // 从瓶口范围进入
+  const [items] = useState(() => makeBlobs().map((b, i) => ({
+    ...b,
+    x: mouthX + (Math.random() * 2 - 1) * mouthRange,
+    y: -30 - i * 26,
+    vx: (Math.random() * 1.2 - 0.6),
+    vy: 0,
+    sx: 1,
+    sy: 1,
+    tsx: 1,
+    tsy: 1,
+    active: false,
+    release: i * 220,
+    settled: false,
+  })));
+  const raf = useRef<number | null>(null);
+  const [, setFrame] = useState(0);
+
+  useEffect(() => {
+    const g = 0.36;
+    const damp = 0.986;
+    const friction = 0.983;
+    const settleEps = 0.02;
+
+    const step = () => {
+      const now = performance.now();
+      const elapsed = now - startRef.current;
+      for (let i = 0; i < items.length; i++) {
+        const it = items[i];
+        if (!it.active && elapsed >= it.release) it.active = true;
+        if (!it.active) continue;
+        if (!it.settled) {
+          it.vy += g;
+          it.x += it.vx;
+          it.y += it.vy;
+        }
+        const left = it.r + 10;
+        const right = WIDTH - it.r - 10;
+        const floor = HEIGHT - it.r - 14;
+        if (it.x < left) { it.x = left; it.vx *= -0.35; }
+        if (it.x > right) { it.x = right; it.vx *= -0.35; }
+        if (it.y > floor) {
+          it.y = floor;
+          const impact = Math.min(1.25, Math.abs(it.vy) / 6);
+          it.vy *= -0.18 * (0.6 + 0.4 * (1 - impact));
+          it.vx *= friction;
+          it.tsx = 1 + 0.08 * impact;
+          it.tsy = 1 - 0.2 * impact;
+          it.vx += (it.x < WIDTH / 2 ? -0.45 : 0.45) * impact + (Math.random() - 0.5) * 0.5;
+          if (Math.abs(it.vx) < settleEps && Math.abs(it.vy) < settleEps) {
+            it.vx = 0; it.vy = 0; it.settled = true; it.tsx = 1; it.tsy = 1;
+          }
+        } else { it.tsx = 1; it.tsy = 1; }
+      }
+      for (let i = 0; i < items.length; i++) {
+        for (let j = i + 1; j < items.length; j++) {
+          const a = items[i]; const b = items[j];
+          if (!a.active || !b.active) continue;
+          const dx = b.x - a.x; const dy = b.y - a.y;
+          const dist = Math.hypot(dx, dy) || 0.0001;
+          const min = a.r + b.r - 4;
+          if (dist < min) {
+            const overlap = (min - dist) / 2;
+            const nx = dx / dist; const ny = dy / dist;
+            a.x -= nx * overlap; a.y -= ny * overlap;
+            b.x += nx * overlap; b.y += ny * overlap;
+            const rvx = b.vx - a.vx; const rvy = b.vy - a.vy;
+            const vn = rvx * nx + rvy * ny;
+            if (vn < 0) {
+              const imp = -(1.02) * vn;
+              const ix = imp * nx * 0.5; const iy = imp * ny * 0.5;
+              a.vx -= ix; a.vy -= iy; b.vx += ix; b.vy += iy;
+              const tx = -ny, ty = nx;
+              a.vx -= tx * 0.12; b.vx += tx * 0.12; a.vy -= ty * 0.12; b.vy += ty * 0.12;
+            }
+            if (Math.abs(a.vx) < settleEps) a.vx = 0; if (Math.abs(a.vy) < settleEps) a.vy = 0;
+            if (Math.abs(b.vx) < settleEps) b.vx = 0; if (Math.abs(b.vy) < settleEps) b.vy = 0;
+          }
+        }
+      }
+      for (let i = 0; i < items.length; i++) {
+        const it = items[i]; if (!it.active) continue;
+        it.vx *= damp; it.vy *= damp;
+        it.sx += (it.tsx - it.sx) * 0.22;
+        it.sy += (it.tsy - it.sy) * 0.22;
+      }
+      setFrame(f => f + 1);
+      raf.current = requestAnimationFrame(step);
+    };
+    raf.current = requestAnimationFrame(step);
+    return () => { if (raf.current) cancelAnimationFrame(raf.current); };
+  }, [items, HEIGHT]);
+
+  return (
+    <div className="relative mb-6" style={{ height: HEIGHT }}>
+      <svg className="absolute inset-x-6 top-0 bottom-0" viewBox={`0 -56 ${WIDTH} ${HEIGHT + 56}`}>
+        <defs>
+          <clipPath id="jarClip">
+            <rect x="0" y="0" width={WIDTH} height={HEIGHT} rx="40" />
+          </clipPath>
+        </defs>
+        <g>
+          <rect x="0" y="0" width={WIDTH} height={HEIGHT} rx="40" fill="#fff" stroke="#111" strokeWidth="3" />
+          <g>
+            <rect x={WIDTH/2 - 60} y={-48} width={120} height={20} rx={2} fill="none" stroke="#111" strokeWidth={3} />
+            <rect x={WIDTH/2 - 70} y={-28} width={140} height={14} rx={2} fill="none" stroke="#111" strokeWidth={3} />
+            <line x1={WIDTH/2 - 70} y1={-14} x2={WIDTH/2 - 70} y2={0} stroke="#111" strokeWidth={3} />
+            <line x1={WIDTH/2 + 70} y1={-14} x2={WIDTH/2 + 70} y2={0} stroke="#111" strokeWidth={3} />
+          </g>
+        </g>
+        <g clipPath="url(#jarClip)">
+          {items.map((it, i) => (
+            <g key={it.id} transform={`translate(${it.x},${it.y}) scale(${it.sx},${it.sy})`} onClick={() => onSelect(it)} style={{ cursor: 'pointer' }}>
+              <defs>
+                <radialGradient id={`g${i}`} cx="50%" cy="40%" r="65%">
+                  <stop offset="0%" stopColor={it.color} stopOpacity="0.95" />
+                  <stop offset="100%" stopColor={it.color} stopOpacity="0.6" />
+                </radialGradient>
+              </defs>
+              <ellipse cx="0" cy="0" rx={it.r * 1.05} ry={it.r * 0.9} fill={`url(#g${i})`} />
+            </g>
+          ))}
+        </g>
+      </svg>
+    </div>
+  );
+};
+
+const ChatPage: React.FC = () => {
+  const chatMessages = [
+    { type: 'ai', text: '晚上好！《惊天魔盗团3》好看吗！感觉你的时候很激动耶！' },
+    { type: 'user', text: '哈哈哈哈是的！群像戏真的很燃。' },
+    { type: 'ai', text: '就跟你上次看喜人2里面的群像一样，永远让人热泪盈眶🥹' },
+    { type: 'user', text: '是的你懂我！' },
+  ];
+  return (
+    <div className="flex-1 flex flex-col">
+      <div className="bg-gradient-to-br from-purple-300/80 via-pink-200/70 to-orange-200/60 p-6 rounded-b-[3rem]">
+        <div className="flex items-center gap-4">
+          <div className="w-16 h-16 bg-white/30 backdrop-blur-xl rounded-full flex items-center justify-center shadow-lg"><span className="text-3xl">🌙</span></div>
+          <div><h2 className="text-gray-900 font-medium text-xl">Mochi</h2><p className="text-gray-700/80 text-sm">你的情绪伙伴</p></div>
+        </div>
+      </div>
+      <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-gradient-to-b from-purple-50/30 to-transparent pb-40">
+        {chatMessages.map((msg, index) => (
+          <div key={index} className={`flex ${msg.type === 'user' ? 'justify-end' : 'justify-start'}`}>
+            <div className={`max-w-[80%] rounded-3xl px-5 py-4 shadow-sm ${msg.type === 'user' ? 'bg-gradient-to-br from-purple-300 to-pink-300 text-white' : 'bg-white text-gray-700 border border-gray-100'}`}><p className="text-sm leading-relaxed font-light">{msg.text}</p></div>
+          </div>
+        ))}
+      </div>
+      <div className="fixed bottom-[88px] left-0 right-0 max-w-md mx-auto px-5 z-20">
+        <div className="flex items-center gap-3 bg-white/90 backdrop-blur-xl rounded-full px-5 py-4 border border-gray-100 shadow-sm">
+          <input type="text" placeholder="分享你的感受..." className="flex-1 bg-transparent outline-none text-sm text-gray-700 placeholder-gray-400 font-light" />
+          <button className="w-10 h-10 bg-gradient-to-br from-purple-300 to-pink-300 rounded-full flex items-center justify-center shadow-md hover:shadow-lg transition-shadow"><span className="text-white text-lg">→</span></button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const DevicePage: React.FC = () => (
+  <div className="flex-1 overflow-y-auto pb-20">
+    <div className="bg-gradient-to-br from-indigo-300/80 via-purple-300/70 to-pink-300/60 p-8 rounded-b-[3rem]">
+      <h1 className="text-3xl font-light text-white mb-2">我的设备</h1>
+      <p className="text-white/70 text-sm font-light">Mochi 生态系统</p>
+    </div>
+
+    <div className="p-6 space-y-6">
+      <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100">
+        <div className="flex items-start justify-between mb-6">
+          <div className="flex items-center gap-4">
+            <div className="w-16 h-16 bg-gradient-to-br from-purple-200/60 to-pink-200/60 rounded-3xl flex items-center justify-center"><span className="text-4xl">🧸</span></div>
+            <div>
+              <h3 className="font-medium text-gray-800 text-lg">Mochi Soft</h3>
+              <p className="text-sm text-gray-400 font-light">毛绒体</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 bg-green-50 px-3 py-1.5 rounded-full">
+            <div className="w-2 h-2 bg-green-400 rounded-full" />
+            <span className="text-xs text-green-600 font-light">已连接</span>
+          </div>
+        </div>
+        <div className="flex gap-3">
+          <div className="flex-1 text-center p-4 bg-gradient-to-br from-purple-50 to-pink-50 rounded-2xl border border-purple-100/50">
+            <p className="text-xs text-gray-500 mb-2 font-light">电量</p>
+            <p className="text-xl font-light text-gray-800">85%</p>
+          </div>
+          <div className="flex-1 text-center p-4 bg-gradient-to-br from-orange-50 to-pink-50 rounded-2xl border border-orange-100/50">
+            <p className="text-xs text-gray-500 mb-2 font-light">温度</p>
+            <p className="text-xl font-light text-gray-800">36°C</p>
+          </div>
+          <div className="flex-1 text-center p-4 bg-gradient-to-br from-blue-50 to-purple-50 rounded-2xl border border-blue-100/50">
+            <p className="text-xs text-gray-500 mb-2 font-light">震动</p>
+            <p className="text-xl font-light text-gray-800">柔和</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100">
+        <div className="flex items-start justify-between mb-6">
+          <div className="flex items-center gap-4">
+            <div className="w-16 h-16 bg-gradient-to-br from-blue-200/60 to-purple-200/60 rounded-3xl flex items-center justify-center"><span className="text-4xl">💍</span></div>
+            <div>
+              <h3 className="font-medium text-gray-800 text-lg">Mochi Ring</h3>
+              <p className="text-sm text-gray-400 font-light">智能戒指</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 bg-green-50 px-3 py-1.5 rounded-full">
+            <div className="w-2 h-2 bg-green-400 rounded-full" />
+            <span className="text-xs text-green-600 font-light">已连接</span>
+          </div>
+        </div>
+        <div className="flex gap-3">
+          <div className="flex-1 text中心 p-4 bg-gradient-to-br from-blue-50 to-purple-50 rounded-2xl border border-blue-100/50">
+            <p className="text-xs text-gray-500 mb-2 font-light">电量</p>
+            <p className="text-xl font-light text-gray-800">92%</p>
+          </div>
+          <div className="flex-1 text中心 p-4 bg-gradient-to-br from-pink-50 to-orange-50 rounded-2xl border border-pink-100/50">
+            <p className="text-xs text-gray-500 mb-2 font-light">心率</p>
+            <p className="text-xl font-light text-gray-800">72</p>
+          </div>
+          <div className="flex-1 text中心 p-4 bg-gradient-to-br from-green-50 to-blue-50 rounded-2xl border border-green-100/50">
+            <p className="text-xs text-gray-500 mb-2 font-light">步数</p>
+            <p className="text-xl font-light text-gray-800">8.2k</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-gradient-to-br from-purple-100/40 via-pink-100/30 to-orange-100/40 rounded-3xl p-6 border border-purple-200/30">
+        <div className="flex items-center gap-4 mb-3">
+          <div className="w-12 h-12 bg-white/80 backdrop-blur-xl rounded-full flex items-center justify-center shadow-sm"><span className="text-2xl">✨</span></div>
+          <div>
+            <p className="font-medium text-gray-800">实时同步</p>
+            <p className="text-sm text-gray-600 font-light">所有设备数据已同步</p>
+          </div>
+        </div>
+        <p className="text-xs text-gray-500 font-light ml-16">上次同步: 刚刚</p>
+      </div>
+    </div>
+  </div>
+);
+
+export default MochiApp;
