@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=ZCOOL+KuaiLe&family=Outfit:wght@300;400;600&display=swap');
+
 :root {
     /* Colors */
     --primary: #A78BFA;
@@ -456,10 +458,7 @@ body {
 }
 
 .chat-input-container {
-    position: absolute;
-    bottom: 100px;
-    left: 20px;
-    right: 20px;
+    position: relative;
     background: rgba(255, 255, 255, 0.9);
     backdrop-filter: blur(10px);
     padding: 10px 10px 10px 20px;
@@ -469,6 +468,7 @@ body {
     border: 1px solid rgba(0, 0, 0, 0.05);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
     z-index: 50;
+    margin: 0 20px 20px 20px;
 }
 
 .chat-input-container input {
@@ -849,4 +849,90 @@ body {
 .device-item:hover {
     border-color: #A78BFA;
     background: rgba(167, 139, 250, 0.05);
+}
+
+/* Receipt Label Styles - Kraft Paper Theme */
+.receipt-label {
+    position: absolute;
+    top: 55%;
+    left: 50%;
+    /* Transform handled by Framer Motion to avoid conflict */
+    /* transform: translate(-50%, -50%); */
+    width: 280px;
+    background: #E8DCCA;
+    /* Kraft Paper Color */
+    padding: 24px 20px;
+    border-radius: 2px;
+    /* Sharper corners for torn look */
+    cursor: pointer;
+    z-index: 200;
+    box-shadow: 0 4px 16px rgba(60, 40, 30, 0.15), inset 0 0 20px rgba(0, 0, 0, 0.05);
+    /* Warmer shadow */
+    overflow: visible;
+}
+
+/* Scalloped edges adjusted for Kraft color - mimicking torn/rough edge via gradient */
+.receipt-label::before {
+    content: '';
+    position: absolute;
+    top: -8px;
+    left: 0;
+    right: 0;
+    height: 10px;
+    background: radial-gradient(circle at 10px 10px, transparent 8px, #E8DCCA 8.5px);
+    background-size: 20px 10px;
+}
+
+.receipt-label::after {
+    content: '';
+    position: absolute;
+    bottom: -8px;
+    left: 0;
+    right: 0;
+    height: 10px;
+    background: radial-gradient(circle at 10px 0px, transparent 8px, #E8DCCA 8.5px);
+    background-size: 20px 10px;
+}
+
+.receipt-content {
+    display: flex;
+    justify-content: center;
+    position: relative;
+    z-index: 1;
+    min-height: 60px;
+}
+
+.receipt-list {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    justify-content: center;
+    align-items: center;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+    color: #5D4336;
+    /* Dark Brown for softer contrast on Kraft */
+    text-align: center;
+    text-shadow: 0 1px 0 rgba(255, 255, 255, 0.2);
+    /* Etched effect */
+}
+
+.receipt-event-item {
+    font-size: 15px;
+    line-height: 1.6;
+    font-weight: 500;
+    position: relative;
+    letter-spacing: 0.01em;
+}
+
+.receipt-grain {
+    position: absolute;
+    inset: 0;
+    opacity: 0.15;
+    /* Increased opacity for visible texture */
+    pointer-events: none;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+    border-radius: 2px;
+    mix-blend-mode: multiply;
+    /* Blends nicely with the color */
 }

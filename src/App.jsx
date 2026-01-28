@@ -30,27 +30,105 @@ const makePearlBlobs = () => {
 
 const JAR_WIDTH = 340;
 
-const JarPhysics = ({ onSelect, height, blobs }) => {
+const JarPhysics = ({ onSelect, height, blobs, isArchive, isUnsealed, onUnseal, archiveData }) => {
     const startRef = useRef(performance.now());
     const [shimmerId, setShimmerId] = useState(null);
     const mouthX = JAR_WIDTH / 2;
     const mouthRange = 36;
     const [items] = useState(() => {
         const combined = [...(blobs || []), ...makePearlBlobs()];
-        return combined.map((b, i) => ({
-            ...b,
-            x: mouthX + (Math.random() * 2 - 1) * (b.isPearl ? JAR_WIDTH / 2 : mouthRange),
-            y: -30 - i * 30, // Stack them up
-            vx: (Math.random() * 1.2 - 0.6),
-            vy: 0,
-            sx: 1,
-            sy: 1,
-            tsx: 1,
-            tsy: 1,
-            active: false,
-            release: i * 100, // Spread out the drops further for a gentler feel
-            settled: false,
-        }));
+
+        let initialItems = combined.map((b, i) => {
+            const x = mouthX + (Math.random() * 2 - 1) * (b.isPearl ? JAR_WIDTH / 2 : mouthRange);
+            // Initial Y for non-archive mode (falling down)
+            const y = -30 - i * 30;
+
+            return {
+                ...b,
+                x,
+                y,
+                vx: (Math.random() * 1.2 - 0.6),
+                vy: 0,
+                sx: 1,
+                sy: 1,
+                tsx: 1,
+                tsy: 1,
+                active: false,
+                release: i * 100,
+                settled: false,
+            };
+        });
+
+        // Pre-simulate physics for Archive Mode to get a natural settled heap
+        if (isArchive) {
+            const SIM_STEPS = 600; // Enough steps to settle
+            const g = 0.34;
+            const damp = 0.96;
+            const friction = 0.95;
+
+            // Activate all immediately for simulation
+            initialItems.forEach(it => {
+                it.active = true;
+                it.release = 0;
+                // Randomize X slightly more for the pile
+                it.x = mouthX + (Math.random() * 2 - 1) * 60;
+                it.y = height / 2 - Math.random() * 100; // Start simpler for the fall
+            });
+
+            for (let s = 0; s < SIM_STEPS; s++) {
+                for (let i = 0; i < initialItems.length; i++) {
+                    const it = initialItems[i];
+                    it.vy += g;
+                    it.x += it.vx;
+                    it.y += it.vy;
+
+                    const left = it.r + 5;
+                    const right = JAR_WIDTH - it.r - 5;
+                    const floor = height - it.r - 10;
+
+                    if (it.x < left) { it.x = left; it.vx *= -0.4; }
+                    if (it.x > right) { it.x = right; it.vx *= -0.4; }
+                    if (it.y > floor) {
+                        it.y = floor;
+                        const impact = Math.min(1.2, Math.abs(it.vy) / 6);
+                        it.vy *= -0.2 * (0.6 + 0.4 * (1 - impact));
+                        it.vx *= friction;
+                    }
+                }
+
+                // Collisions
+                for (let i = 0; i < initialItems.length; i++) {
+                    for (let j = i + 1; j < initialItems.length; j++) {
+                        const a = initialItems[i]; const b = initialItems[j];
+                        const dx = b.x - a.x; const dy = b.y - a.y;
+                        const dist = Math.hypot(dx, dy) || 0.001;
+                        const min = a.r + b.r - 2;
+                        if (dist < min) {
+                            const overlap = (min - dist) / 2;
+                            const nx = dx / dist; const ny = dy / dist;
+                            a.x -= nx * overlap; a.y -= ny * overlap;
+                            b.x += nx * overlap; b.y += ny * overlap;
+                            const rvx = b.vx - a.vx; const rvy = b.vy - a.vy;
+                            const vn = rvx * nx + rvy * ny;
+                            if (vn < 0) {
+                                const imp = -0.7 * vn;
+                                a.vx -= imp * nx * 0.5; a.vy -= imp * ny * 0.5;
+                                b.vx += imp * nx * 0.5; b.vy += imp * ny * 0.5;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Mark all as settled and stop velocity after sim
+            initialItems.forEach(it => {
+                it.vx = 0;
+                it.vy = 0;
+                it.settled = true;
+            });
+        }
+
+        return initialItems;
     });
     const raf = useRef(null);
     const [, setFrame] = useState(0);
@@ -143,13 +221,28 @@ const JarPhysics = ({ onSelect, height, blobs }) => {
             setFrame(f => f + 1);
             raf.current = requestAnimationFrame(step);
         };
-        raf.current = requestAnimationFrame(step);
+
+        // Only run physics if NOT in archive mode.
+        // In archive mode, blobs are static (or animated via CSS/Framer only).
+        if (!isArchive) {
+            raf.current = requestAnimationFrame(step);
+        }
+
         return () => cancelAnimationFrame(raf.current);
-    }, [items, height]);
+    }, [items, height, isArchive]);
 
     return (
         <div style={{ height, position: 'relative', width: JAR_WIDTH, margin: '0 auto' }}>
-            <svg viewBox={`0 -60 ${JAR_WIDTH} ${height + 60}`} style={{ width: '100%', height: '100%', overflow: 'visible' }}>
+            <svg
+                viewBox={`0 -60 ${JAR_WIDTH} ${height + 60}`}
+                style={{
+                    width: '100%',
+                    height: '100%',
+                    overflow: 'visible',
+                    filter: (isArchive && !isUnsealed) ? 'brightness(0.9) grayscale(0.15)' : 'none',
+                    transition: 'filter 0.8s ease'
+                }}
+            >
                 <defs>
                     <clipPath id="jarClip">
                         <rect x="0" y="0" width={JAR_WIDTH} height={height} rx="45" />
@@ -179,6 +272,17 @@ const JarPhysics = ({ onSelect, height, blobs }) => {
                 <g transform={`translate(${JAR_WIDTH / 2 - 70}, -50)`}>
                     <rect width="140" height="15" rx="4" fill="none" stroke="#2D3748" strokeWidth="2.5" />
                     <rect x="15" y="15" width="110" height="12" rx="2" fill="none" stroke="#2D3748" strokeWidth="2.5" />
+                    {/* Flat Cap - History Mode */}
+                    {isArchive && !isUnsealed && (
+                        <motion.rect
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            width="140" height="20" rx="4"
+                            fill="#2D3748"
+                            transform="translate(0, -5)"
+                        />
+                    )}
                     <line x1="15" y1="27" x2="15" y2="50" stroke="#2D3748" strokeWidth="2.5" />
                     <line x1="125" y1="27" x2="125" y2="50" stroke="#2D3748" strokeWidth="2.5" />
                 </g>
@@ -203,11 +307,18 @@ const JarPhysics = ({ onSelect, height, blobs }) => {
 
                 <g clipPath="url(#jarClip)">
                     {items.map((it, i) => (
-                        <g
+                        <motion.g
                             key={it.id}
-                            transform={`translate(${it.x},${it.y}) scale(${it.sx},${it.sy})`}
+                            style={{
+                                x: it.x,
+                                y: it.y,
+                                scaleX: it.sx,
+                                scaleY: it.sy,
+                                cursor: it.isPearl ? 'default' : 'pointer'
+                            }}
+                            animate={isUnsealed ? { scale: [1, 1.15, 1] } : {}}
+                            transition={{ duration: 0.5, ease: "backOut" }}
                             onClick={() => !it.isPearl && onSelect(it)}
-                            style={{ cursor: it.isPearl ? 'default' : 'pointer' }}
                         >
                             <defs>
                                 <radialGradient id={`grad-${it.id}`} cx="35%" cy="35%" r="65%">
@@ -249,10 +360,41 @@ const JarPhysics = ({ onSelect, height, blobs }) => {
                                     fill="rgba(255, 255, 255, 0.6)"
                                 />
                             )}
-                        </g>
+                        </motion.g>
                     ))}
                 </g>
             </svg>
+
+            {/* Receipt Label */}
+            <AnimatePresence>
+                {isArchive && !isUnsealed && (
+                    <motion.div
+                        className="receipt-label"
+                        initial={{ opacity: 0, scale: 0.9, x: "-50%", y: "calc(-50% - 20px)" }}
+                        animate={{ opacity: 1, scale: 1, x: "-50%", y: "-50%" }}
+                        exit={{
+                            opacity: 0,
+                            scale: 0.8,
+                            rotate: 15,
+                            x: "20%",
+                            y: "-150%",
+                            transition: { duration: 0.6, ease: "easeIn" }
+                        }}
+                        onClick={onUnseal}
+                    >
+                        <div className="receipt-content">
+                            <div className="receipt-list">
+                                {archiveData.events?.map((ev, idx) => (
+                                    <div key={idx} className="receipt-event-item">
+                                        {ev.text}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                        <div className="receipt-grain"></div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
         </div>
     );
 };
@@ -276,6 +418,13 @@ const MOCK_DATA = {
         statusTitle: '昨日回看',
         statusText: '虽然有些波折，但最后还是找到了平静',
         whisper: { icon: <Radio size={14} />, text: '这是你昨天留下的记录' },
+        emotionSummary: '平静而有力量',
+        events: [
+            { text: '🎧 随口记了一句有点累' },
+            { text: '⚡️ 工作中有点不舒服' },
+            { text: '� 后来慢慢安静下来' },
+            { text: '🌙 写下了一点空空的感觉' }
+        ],
         blobs: [
             { id: 10, r: 45, color: '#60A5FA', label: '疲惫', time: '22:30', note: '洗完澡感觉好多了', source: 'manual' },
             { id: 11, r: 38, color: '#A78BFA', label: '思考', time: '14:00', note: '关于未来的计划...', source: 'chat' },
@@ -289,6 +438,11 @@ const MOCK_DATA = {
         statusTitle: '历史记录',
         statusText: '那天你好像睡了很久...',
         whisper: { icon: <Sparkles size={14} />, text: '深度睡眠是最好的治愈' },
+        emotionSummary: '深度修复中',
+        events: [
+            { text: '🛌 睡了一个长长的午觉' },
+            { text: '✨ 感觉能量慢慢回来了' }
+        ],
         blobs: [] // Empty date
     },
     wed6: {
@@ -299,6 +453,12 @@ const MOCK_DATA = {
         statusTitle: '历史记录',
         statusText: '能量满满的一天，效率很高',
         whisper: { icon: <Radio size={14} />, text: '这是你的高效时刻' },
+        emotionSummary: '效率满分',
+        events: [
+            { text: '🔥 专注力非常棒的一天' },
+            { text: '🍱 吃到了很好吃的便当' },
+            { text: '📝 完成了所有计划事项' }
+        ],
         blobs: [
             { id: 20, r: 40, color: '#FBBF24', label: '心流', time: '10:00', note: '专注工作的感觉真好', source: 'manual' }
         ]
@@ -323,6 +483,15 @@ function App() {
     const [todayBlobs, setTodayBlobs] = useState([]); // Start with empty for fresh onboarding
     // const [todayBlobs, setTodayBlobs] = useState(makeBlobs()); // 原本的今日案例数据
     const [showTooltip, setShowTooltip] = useState(false); // Post-onboarding guide
+
+    // Archive sealed state (Ephemeral: resets when navigating or changing dates)
+    const [isUnsealed, setIsUnsealed] = useState(false);
+
+    // Reset unseal state when changing dates or pages
+    useEffect(() => {
+        setIsUnsealed(false);
+    }, [selectedDate, currentPage]);
+
     const [isScanning, setIsScanning] = useState(false); // Device discovery modal
     const [pairingDevice, setPairingDevice] = useState(null); // Current device in setup flow
     const [onboardingInput, setOnboardingInput] = useState(''); // Textarea content for onboarding/manual
@@ -501,7 +670,20 @@ function App() {
         }))
     };
 
-    const headerBg = EMOTION_COLORS[currentData.emoji] || EMOTION_COLORS['default'];
+    const isHeaderEmpty = selectedDate === 'today' && todayBlobs.length === 0;
+    const headerEmoji = isHeaderEmpty ? '\u2728' : currentData.emoji;
+    const headerStatusIcon = isHeaderEmpty ? <Sparkles size={14} /> : currentData.whisper.icon;
+    const headerBg = EMOTION_COLORS[headerEmoji] || EMOTION_COLORS['default'];
+
+    const headerStatusContent = isHeaderEmpty ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+            <span style={{ fontSize: '14px', fontStyle: 'normal', fontWeight: 600, color: '#374151' }}>{"今天还没有记录呢"}</span>
+            <span style={{ fontSize: '12px', color: '#6B7280' }}>{"先把这一刻放进情绪罐头，Mochi 会帮你总结。"}</span>
+            <span style={{ fontSize: '11px', color: '#9CA3AF' }}>{"点击 + 开始记录，也支持语音输入"}</span>
+        </div>
+    ) : (
+        <span style={{ fontSize: '14px', fontStyle: 'normal' }}>{currentData.statusText}</span>
+    );
 
     // 切换日期或数量变化时，重置罐头动画（通过 key）
     const jarKey = `${selectedDate}-${currentData.blobs.length}`;
@@ -586,6 +768,26 @@ function App() {
                 }];
             });
         }, 1000);
+    };
+
+
+    const requestEventMemoryExtraction = (session) => {
+        // TODO: replace with real API call to extract event memory
+        console.log('[event-memory] extract after session end', session);
+    };
+
+    const handleEndSession = () => {
+        if (chatSessions.length === 0) return;
+        const lastSnapshot = chatSessions[chatSessions.length - 1];
+        setChatSessions(prev => {
+            const lastSession = prev[prev.length - 1];
+            if (lastSession && lastSession.isClosed) return prev;
+            const otherSessions = prev.slice(0, -1);
+            const endCardContent = '\u8fd9\u4e00\u6bb5\u5bf9\u8bdd\u5148\u653e\u5728\u8fd9\u91cc\uff0c\u4f60\u4eca\u5929\u5df2\u7ecf\u5f88\u68d2\u4e86\u3002';
+            return [...otherSessions, { ...lastSession, isClosed: true, endCardContent }];
+        });
+
+        requestEventMemoryExtraction(lastSnapshot);
     };
 
     // 模拟推送通知逻辑 (Push Notification Simulation)
@@ -820,12 +1022,12 @@ function App() {
                                         <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#111827' }}>{currentData.dateStr.split(' ')[0]}</h1>
                                         <p style={{ fontSize: '13px', color: '#6B7280', marginTop: '2px' }}>{currentData.dateStr.split(' ')[1]}</p>
                                     </div>
-                                    <div style={{ fontSize: '28px' }}>{currentData.emoji}</div>
+                                    <div style={{ fontSize: '28px' }}>{headerEmoji}</div>
                                 </div>
                                 <div className="status-card" style={{ marginTop: 0 }}>
                                     <div className="mochi-whisper" style={{ marginTop: 0 }}>
-                                        {currentData.whisper.icon}
-                                        <span style={{ fontSize: '14px', fontStyle: 'normal' }}>{currentData.statusText}</span>
+                                        {headerStatusIcon}
+                                        {headerStatusContent}
                                     </div>
                                 </div>
                             </div>
@@ -851,21 +1053,40 @@ function App() {
                             </div>
 
                             <div className="jar-container">
-                                <JarPhysics key={jarKey} height={360} onSelect={setSelectedBlob} blobs={currentData.blobs} />
+                                <JarPhysics
+                                    key={jarKey}
+                                    height={360}
+                                    onSelect={setSelectedBlob}
+                                    blobs={currentData.blobs}
+                                    isArchive={selectedDate !== 'today'}
+                                    isUnsealed={isUnsealed}
+                                    onUnseal={() => setIsUnsealed(true)}
+                                    archiveData={currentData}
+                                />
                             </div>
 
-                            <div style={{ position: 'absolute', bottom: '96px', right: '24px', zIndex: 100 }}>
-                                {/* Manual Entry Only */}
+                            <div style={{ position: 'absolute', bottom: '84px', right: '16px', zIndex: 100 }}>
+                                {/* Manual Entry - Disabled in History Mode */}
                                 <motion.button
                                     className="home-fab"
-                                    whileHover={{ scale: 1.05 }}
-                                    whileTap={{ scale: 0.95 }}
+                                    whileHover={selectedDate === 'today' ? { scale: 1.05 } : {}}
+                                    whileTap={selectedDate === 'today' ? { scale: 0.95 } : {}}
                                     onClick={() => {
+                                        if (selectedDate !== 'today') return;
                                         setOnboardingInput('');
                                         setOnboardingStep(1);
                                     }}
+                                    style={{
+                                        background: selectedDate === 'today' ? 'white' : 'rgba(255, 255, 255, 0.4)', // Semi-transparent
+                                        width: '56px', height: '56px', borderRadius: '28px',
+                                        boxShadow: selectedDate === 'today' ? '0 4px 12px rgba(0,0,0,0.1)' : 'none',
+                                        border: selectedDate === 'today' ? 'none' : '1px solid rgba(0,0,0,0.05)',
+                                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                        cursor: selectedDate === 'today' ? 'pointer' : 'default',
+                                        opacity: selectedDate === 'today' ? 1 : 0.6 // Reduce opacity
+                                    }}
                                 >
-                                    <Plus size={24} color="#6B7280" />
+                                    <Plus size={24} color={selectedDate === 'today' ? "#6B7280" : "#9CA3AF"} />
                                 </motion.button>
                             </div>
 
@@ -961,7 +1182,7 @@ function App() {
                             initial={{ opacity: 0, y: 10 }}
                             animate={{ opacity: 1, y: 0 }}
                             exit={{ opacity: 0, y: -10 }}
-                            style={{ display: 'flex', flexDirection: 'column', height: '100%' }}
+                            style={{ display: 'flex', flexDirection: 'column', height: '100%', position: 'relative' }}
                         >
                             {/* Ambient Background Mesh */}
                             <div style={{
@@ -987,7 +1208,7 @@ function App() {
 
                             <div
                                 ref={chatEndRef}
-                                style={{ padding: '24px 24px 90px 24px', paddingTop: '60px', display: 'flex', flexDirection: 'column', overflowY: 'auto', flex: 1, zIndex: 1 }}
+                                style={{ padding: '24px 24px 24px 24px', paddingTop: '60px', display: 'flex', flexDirection: 'column', overflowY: 'auto', flex: 1, zIndex: 1 }}
                             >
 
                                 {/* 模拟更早的历史记录 (Faded) - 12/1 */}
@@ -1046,6 +1267,20 @@ function App() {
                                                 {msg.text}
                                             </div>
                                         ))}
+                                        {session.isClosed && (
+                                            <div>
+                                                <div className="saved-indicator" style={{ marginBottom: '0', marginTop: '16px' }}>
+                                                    <div className="dot" />
+                                                    <span>{`\u5df2\u5c01\u5b58\u4e8e ${session.timestamp}`}</span>
+                                                </div>
+                                                <div className="session-end-card" style={{ flexShrink: 0, marginTop: '12px' }}>
+                                                    <div className="end-card-shine" />
+                                                    <p style={{ fontSize: '14px', color: '#4B5563', lineHeight: '1.6', marginBottom: '0' }}>
+                                                        {session.endCardContent}
+                                                    </p>
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
                                 ))}
 
@@ -1053,6 +1288,41 @@ function App() {
                                 <div ref={messagesEndRef} style={{ height: '1px' }} />
                             </div>
 
+                            {/* "今天到这儿" Button - Outside of scrollable container */}
+                            <div style={{ display: 'flex', justifyContent: 'center', padding: '12px 24px', zIndex: 40 }}>
+                                <button
+                                    onClick={handleEndSession}
+                                    style={{
+                                        padding: '10px 18px',
+                                        borderRadius: '20px',
+                                        border: '1px solid rgba(167, 139, 250, 0.3)',
+                                        background: 'linear-gradient(135deg, rgba(167, 139, 250, 0.08), rgba(252, 165, 165, 0.05))',
+                                        color: '#6B7280',
+                                        fontSize: '13px',
+                                        fontWeight: 500,
+                                        letterSpacing: '0.3px',
+                                        boxShadow: '0 4px 12px rgba(167, 139, 250, 0.08)',
+                                        cursor: 'pointer',
+                                        transition: 'all 0.2s ease',
+                                        backdropFilter: 'blur(10px)',
+                                        WebkitBackdropFilter: 'blur(10px)'
+                                    }}
+                                    onMouseEnter={(e) => {
+                                        e.target.style.background = 'linear-gradient(135deg, rgba(167, 139, 250, 0.12), rgba(252, 165, 165, 0.08))';
+                                        e.target.style.boxShadow = '0 6px 16px rgba(167, 139, 250, 0.12)';
+                                        e.target.style.transform = 'translateY(-2px)';
+                                    }}
+                                    onMouseLeave={(e) => {
+                                        e.target.style.background = 'linear-gradient(135deg, rgba(167, 139, 250, 0.08), rgba(252, 165, 165, 0.05))';
+                                        e.target.style.boxShadow = '0 4px 12px rgba(167, 139, 250, 0.08)';
+                                        e.target.style.transform = 'translateY(0)';
+                                    }}
+                                >
+                                    {"✨ 今天先到这儿"}
+                                </button>
+                            </div>
+
+                            {/* Input Container */}
                             <div className="chat-input-container">
                                 <div
                                     className={`voice-trigger chat ${isVoiceActive && voiceContext === 'chat' ? 'recording' : ''}`}
