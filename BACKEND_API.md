@@ -8,13 +8,15 @@
 ## 0. 约定
 
 - Base URL：`/api`
-- 时间格式：`YYYY/MM/DD · HH:mm`（如 `2025/12/2 · 4:40 PM`）
+- 时间格式：**RFC3339** (如 `2025-12-02T16:40:00Z` 或 `2025-12-02T16:40:00+08:00`)
+- **展示转换约定**：后端始终返回 RFC3339 机器时间。前端负责根据业务场景将其格式化为用户可读的文案（如 `9:41 AM` 或 `2025年11月9日`）。
 - 所有返回默认 `200`，失败用 `4xx/5xx`（Demo 可简化）
-- 认证：Demo 阶段可返回 mock token
+- 认证：Demo 阶段使用 `Authorization: Bearer <token>` 请求头。
+- **身份标识约定**：虽然数据库实体中包含 `userId`，但 **API 请求体中通常不需要包含 `userId`**。后端会从 Token 中解出当前操作的 `userId`，以确保数据安全（防止越权）。
 
 ---
 
-## 1. 账号系统
+## 1. 认证与账号
 
 ### 1.1 手机号登录
 `POST /api/auth/login`
@@ -35,7 +37,9 @@
     "phoneNumber": "13800003721",
     "phoneSuffix": "3721",
     "avatar": "https://...",
-    "daysWithMochi": 12
+    "createdAt": "2025-11-01T00:00:00Z",
+    "daysWithMochi": 12,
+    "loginCount": 42
   }
 }
 ```
@@ -65,24 +69,21 @@
   "id": "today",
   "label": "Today",
   "dateStr": "2025年11月9日",
+  "fullDate": "2025-11-09T00:00:00Z",
   "emoji": "😇",
-  "statusTitle": "今日状态",
   "statusText": "情绪起起伏伏，但你始终能把自己接住",
-  "whisper": { "icon": "sparkles", "text": "听起来你现在需要一点安静的空间..." },
-  "events": [
-    { "text": "🎧 随口记了一句有点累" },
-    { "text": "⚡️ 工作中有点不舒服" },
-    { "text": "🍜 后来慢慢安静下来" }
-  ],
+  "whisper": { "text": "听起来你现在需要一点安静的空间..." },
+  "archiveLabel": {
+    "emotions": "#焦虑 #挫败 #治愈",
+    "events": "排期催命 | 被换人 | 猫咪陪伴"
+  },
   "blobs": [
-    {
       "id": "blob_1",
-      "r": 42,
-      "color": "#F7AC52",
+      "sentimentTag": "能量橙/黄",
       "label": "心跳加速",
-      "time": "12:20",
+      "time": "2025-11-09T12:20:00Z",
       "note": "刚刚发生的事情…",
-      "source": "manual",
+      "source": "手动记录",
       "isDiscussed": false
     }
   ]
@@ -90,10 +91,10 @@
 ```
 
 **字段说明**
-- `emoji`：用于 Header 渐变映射
-- `statusTitle`/`statusText`：白色胶囊卡片
-- `whisper.icon`：前端图标 key（如 `sparkles` / `radio`）
-- `blobs[].isDiscussed`：已讨论状态（影响视觉）
+| `emoji` | String | 用于 Header 渐变映射 (如 "😇") |
+| `statusText` | String | 白色胶囊卡片主文本 |
+| `archiveLabel`| Object | 历史档案标签 (包含 `emotions` 和 `events` 字符串) |
+| `blobs[].isDiscussed` | Boolean | 已讨论状态 (影响视觉光晕) |
 
 ---
 
@@ -105,10 +106,10 @@
 **请求**
 ```json
 {
+  "sentimentTag": "波动粉/红",
   "label": "新记录",
   "note": "今天有点乱…",
-  "source": "manual",
-  "color": "#F472B6"
+  "source": "手动记录"
 }
 ```
 
@@ -116,12 +117,11 @@
 ```json
 {
   "id": "blob_123",
-  "r": 40,
-  "color": "#F472B6",
+  "sentimentTag": "波动粉/红",
   "label": "新记录",
-  "time": "14:32",
+  "time": "2025-11-09T14:32:00Z",
   "note": "今天有点乱…",
-  "source": "manual",
+  "source": "手动记录",
   "isDiscussed": false
 }
 ```
@@ -151,14 +151,14 @@
 [
   {
     "sessionId": "s_001",
-    "timestamp": "2025/12/2 · 4:40 PM",
+    "startTime": "2025-11-09T14:40:00Z",
     "messages": [
-      { "type": "ai", "text": "嗨，我是 Mochi。" },
-      { "type": "user", "text": "今天有点累" }
+      { "sessionId": "s_001", "type": "ai", "text": "嗨，我是 Mochi。", "timestamp": "2025-11-09T14:40:01Z" },
+      { "sessionId": "s_001", "type": "user", "text": "今天有点累", "timestamp": "2025-11-09T14:42:00Z" }
     ],
     "isClosed": false,
     "endCardContent": null,
-    "relatedBlobId": "blob_123"
+    "relatedBlobIds": ["blob_123"]
   }
 ]
 ```
@@ -179,6 +179,19 @@
 { "aiReply": "我在听。要不要多说一点？" }
 ```
 
+### 4.3 结束会话并生成结语
+`PATCH /api/chat/sessions/{id}/close`
+
+**响应**
+```json
+{
+  "sessionId": "s_001",
+  "isClosed": true,
+  "closedAt": "2025-11-09T17:15:00Z",
+  "endCardContent": "这周的能量稍微低一点也没关系。记得多喝点温水，下午见。"
+}
+```
+
 > 备注：前端当前为本地 mock，后端可返回单条 AI 回复文本
 
 ---
@@ -186,7 +199,15 @@
 ## 5. 推送提示（模拟）
 
 ### 5.1 获取推荐推送内容
-`GET /api/notifications/suggest`
+`POST /api/notifications/suggest`
+
+**请求**
+```json
+{
+  "undiscussedBlobIds": ["blob_123"] 
+}
+```
+> 若当日无任何碎片，则传 `null`
 
 **响应**
 ```json
@@ -201,44 +222,94 @@
 
 ---
 
-## 6. 数据模型（简版）
+## 6. 使用行为统计 (Analytics)
 
-### 6.1 EmotionBlob
+### 6.1 上报使用时长
+`POST /api/analytics/usage`
+
+**请求**
 ```json
 {
-  "id": "string",
-  "r": 40,
-  "color": "#F472B6",
-  "label": "情绪关键词",
-  "time": "HH:mm",
-  "note": "文字内容",
-  "source": "manual|chat|auto",
-  "isDiscussed": false
+  "startTime": "2025/12/2 · 4:40 PM",
+  "endTime": "2025/12/2 · 4:55 PM",
+  "durationSeconds": 900,
+  "deviceInfo": "iPhone 15 Pro, iOS 17.1"
 }
 ```
 
-### 6.2 ChatSession
+**响应**
 ```json
-{
-  "sessionId": "string",
-  "timestamp": "YYYY/MM/DD · HH:mm",
-  "messages": [{ "type": "ai|user", "text": "..." }],
-  "isClosed": false,
-  "endCardContent": "可选",
-  "relatedBlobId": "可选"
-}
+{ "success": true }
 ```
 
-### 6.3 UserProfile
-```json
-{
-  "userId": "string",
-  "phoneNumber": "string",
-  "phoneSuffix": "string",
-  "avatar": "string",
-  "daysWithMochi": 12
-}
-```
+> 备注：通常在 App 进入后台或用户主动退出时触发。
+
+---
+
+## 7. 数据实体与字段全集 (Data Entity Schema)
+
+后端开发请以此表为准进行数据库建模或数据结构整理。
+
+### 6.1 用户信息 (User/Profile)
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| `userId` | String | 用户唯一 ID |
+| `phoneNumber` | String | 完整手机号 (用于登录) |
+| `phoneSuffix` | String | 手机后四位 (UI 展示用) |
+| `avatar` | String | 头像 URL |
+| `daysWithMochi` | Number | 注册/使用天数 |
+| `token` | String | 会话身份凭证 |
+
+### 6.2 每日状态与时间轴 (DailyStatus/Day)
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| `id` | String | 唯一标识 (如 "today", "tue5") |
+| `label` | String | 时间轴简写 (如 "Today", "Tue 5") |
+| `dateStr` | String | 完整日期文案 (如 "2025年11月9日") |
+| `hasRecords` | Boolean | 时间轴是否有记录 (影响呼吸灯点亮) |
+| `emoji` | String | 当日心情主 Emoji (影响背景色) |
+| `statusText` | String | 首页胶囊卡片主文本 |
+| `emotionSummary`| String | (历史模式) 该日的关键总结句 |
+| `whisper` | Object | 包含 `text` 的文本对象 |
+| `events` | Array | `[{ "text": "..." }]` 历史小票事件列表 |
+| `blobs` | Array | 包含 `EmotionBlob` 对象的列表 |
+
+### 6.3 情绪碎片 (EmotionBlob)
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| `id` | String | 碎片唯一 ID |
+| `r` | Number | 半径/大小 (建议范围 38-45) |
+| `color` | String | 十六进制颜色 (如 "#F472B6") |
+| `label` | String | 情绪关键词/标题 |
+| `time` | String | 捕捉时间 (HH:mm) |
+| `note` | String | 详细记录内容 |
+| `source` | Enum | 来源: `手动记录` (App内)、`对话提取` (聊天)、`录音记录` (硬件戒指) |
+| `isDiscussed` | Boolean | 是否已在聊天中讨论过 (影响视觉光晕) |
+
+### 6.4 聊天会话 (ChatSession)
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| `sessionId` | String | 会话唯一 ID |
+| `timestamp` | String | 会话开始时间文案 |
+| `messages` | Array | 包含 `Message` 对象的列表 |
+| `isClosed` | Boolean | 会话是否已结束并生成了 End Card |
+| `closedAt` | String | 会话封存时间 (YYYY/MM/DD · HH:mm) |
+| `endCardContent`| String | 会话结束后的结语总结文本 |
+| `relatedBlobId` | String | 引发该会话的对应碎片 ID (可选) |
+
+### 6.5 聊天消息 (Message)
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| `type` | Enum | 发送方: `ai` 或 `user` |
+| `text` | String | 消息文本内容 |
+| `timestamp` | String | 发送时间 (HH:mm) |
+
+### 6.6 推送建议 (Notification)
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| `blobId` | String | 指向的 EmotionBlob ID |
+| `title` | String | 横幅标题 |
+| `body` | String | 横幅内容 |
 
 ---
 

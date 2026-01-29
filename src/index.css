@@ -58,6 +58,28 @@ body {
     box-shadow: 0 20px 50px rgba(0, 0, 0, 0.1);
 }
 
+.animate-pulse {
+    animation: fab-pulse-ring 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes fab-pulse-ring {
+
+    0%,
+    100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+
+    50% {
+        opacity: .6;
+        transform: scale(1.1);
+    }
+}
+
+.home-fab.recording {
+    border: 2px solid #A78BFA !important;
+}
+
 @media (min-width: 500px) {
     .app-container {
         height: 92vh;

@@ -4,31 +4,10 @@ import {
     Heart, MessageCircle, Radio, Signal, Wifi, Battery,
     ChevronRight, Settings, Send, User, Sparkles, X, ChevronLeft, Mic, Plus, Bell
 } from 'lucide-react'
+import { formatToHHmm, formatToDate, formatToWeekday, formatToSessionTime, getTimeLabel } from './utils/timeUtils'
+import { JAR_WIDTH } from './constants/visuals'
+import { makeBlobs, makePearlBlobs, enrichBlob } from './utils/blobHelpers'
 
-// --- 物理数据定义 ---
-const makeBlobs = () => ([
-    { id: 0, r: 42, color: '#F7AC52', label: '心跳加速💗', time: '12:20', note: '⏺️ 好球！！' },
-    { id: 1, r: 38, color: '#FCA5A5', label: '愉悦', time: '13:00', note: '终于打羽毛球了！好爽～' },
-    { id: 2, r: 40, color: '#34D399', label: '放松', time: '14:00', note: '小小喝咖啡放松一下☕️' },
-    { id: 3, r: 44, color: '#60A5FA', label: 'emo', time: '10:00', note: '周一又上班了' },
-    { id: 4, r: 40, color: '#A78BFA', label: '紧张', time: '11:00', note: '今天好像有点紧张。老板不太满意哦' },
-    { id: 5, r: 38, color: '#F7AC52', label: '心跳加速💗', time: '10:30', note: '⏺️你这个汇报的什么东西，重新想想…' },
-]);
-
-const makePearlBlobs = () => {
-    const pearlTints = ['#F9FAFB', '#F0F9FF', '#F5F3FF', '#F0FDF4', '#FFF1F2'];
-    return Array.from({ length: 16 }).map((_, i) => ({
-        id: `pearl-${i}`,
-        r: 10 + Math.random() * 8,
-        color: pearlTints[Math.floor(Math.random() * pearlTints.length)],
-        isPearl: true,
-        label: '',
-        note: '',
-        time: ''
-    }));
-};
-
-const JAR_WIDTH = 340;
 
 const JarPhysics = ({ onSelect, height, blobs, isArchive, isUnsealed, onUnseal, archiveData }) => {
     const startRef = useRef(performance.now());
@@ -384,11 +363,22 @@ const JarPhysics = ({ onSelect, height, blobs, isArchive, isUnsealed, onUnseal, 
                     >
                         <div className="receipt-content">
                             <div className="receipt-list">
-                                {archiveData.events?.map((ev, idx) => (
-                                    <div key={idx} className="receipt-event-item">
-                                        {ev.text}
-                                    </div>
-                                ))}
+                                {archiveData.archiveLabel ? (
+                                    <>
+                                        <div className="receipt-emotions" style={{ fontSize: '16px', fontWeight: 600, color: '#4B3F35', marginBottom: '8px' }}>
+                                            {archiveData.archiveLabel.emotions}
+                                        </div>
+                                        <div className="receipt-events" style={{ fontSize: '13px', opacity: 0.8, color: '#5D4336' }}>
+                                            {archiveData.archiveLabel.events}
+                                        </div>
+                                    </>
+                                ) : (
+                                    archiveData.events?.map((ev, idx) => (
+                                        <div key={idx} className="receipt-event-item">
+                                            {ev.text}
+                                        </div>
+                                    ))
+                                )}
                             </div>
                         </div>
                         <div className="receipt-grain"></div>
@@ -402,75 +392,69 @@ const JarPhysics = ({ onSelect, height, blobs, isArchive, isUnsealed, onUnseal, 
 // --- Mock Data ---
 const MOCK_DATA = {
     today: {
+        id: 'today',
         label: 'Today',
-        dateStr: '2025年11月9日 星期一',
+        fullDate: '2025-11-09T00:00:00Z',
         emoji: '😇',
-        statusTitle: '今日状态',
         statusText: '情绪起起伏伏，你始终能把自己接住',
-        whisper: { icon: <Sparkles size={14} />, text: '听起来你现在需要一点点安静的空间...' },
+        whisper: { text: '听起来你现在需要一点点安静的空间...' },
         blobs: makeBlobs(),
     },
     yesterday: {
         id: 'yesterday',
-        label: 'Sat 8',
-        dateStr: '2025年11月8日 星期日',
+        label: 'Yesterday',
+        fullDate: '2025-11-08T00:00:00Z',
         emoji: '😌',
-        statusTitle: '昨日回看',
         statusText: '虽然有些波折，但最后还是找到了平静',
-        whisper: { icon: <Radio size={14} />, text: '这是你昨天留下的记录' },
-        emotionSummary: '平静而有力量',
-        events: [
-            { text: '🎧 随口记了一句有点累' },
-            { text: '⚡️ 工作中有点不舒服' },
-            { text: '� 后来慢慢安静下来' },
-            { text: '🌙 写下了一点空空的感觉' }
-        ],
+        whisper: { text: '这是你昨天留下的记录' },
+        archiveLabel: {
+            emotions: '#疲惫 #烦躁→平静',
+            events: '加班 | 深夜散步 | 放空'
+        },
         blobs: [
-            { id: 10, r: 45, color: '#60A5FA', label: '疲惫', time: '22:30', note: '洗完澡感觉好多了', source: 'manual' },
-            { id: 11, r: 38, color: '#A78BFA', label: '思考', time: '14:00', note: '关于未来的计划...', source: 'chat' },
-        ]
+            { id: 10, sentimentTag: '沉思紫/灰', label: '疲惫', time: '2025-11-08T22:30:00Z', note: '洗完澡感觉好多了', source: '手动记录' },
+            { id: 11, sentimentTag: '沉思紫/灰', label: '思考', time: '2025-11-08T14:00:00Z', note: '关于未来的计划...', source: '对话提取' },
+        ].map(enrichBlob)
     },
     thu7: {
         id: 'thu7',
         label: 'Thu 7',
-        dateStr: '2025年11月7日 星期五',
+        fullDate: '2025-11-07T00:00:00Z',
         emoji: '😴',
-        statusTitle: '历史记录',
         statusText: '那天你好像睡了很久...',
-        whisper: { icon: <Sparkles size={14} />, text: '深度睡眠是最好的治愈' },
-        emotionSummary: '深度修复中',
-        events: [
-            { text: '🛌 睡了一个长长的午觉' },
-            { text: '✨ 感觉能量慢慢回来了' }
-        ],
+        whisper: { text: '深度睡眠是最好的治愈' },
+        archiveLabel: {
+            emotions: '#焦虑 #挫败 #治愈',
+            events: '任务堆积 | 某件事没说完'
+        },
         blobs: [] // Empty date
     },
     wed6: {
         id: 'wed6',
         label: 'Wed 6',
-        dateStr: '2025年11月6日 星期四',
+        fullDate: '2025-11-06T00:00:00Z',
         emoji: '⚡️',
-        statusTitle: '历史记录',
         statusText: '能量满满的一天，效率很高',
-        whisper: { icon: <Radio size={14} />, text: '这是你的高效时刻' },
-        emotionSummary: '效率满分',
-        events: [
-            { text: '🔥 专注力非常棒的一天' },
-            { text: '🍱 吃到了很好吃的便当' },
-            { text: '📝 完成了所有计划事项' }
-        ],
+        whisper: { text: '这是你的高效时刻' },
+        archiveLabel: {
+            emotions: '#兴奋 #成就感 #满足',
+            events: '项目上线 | 团队聚餐 | 好的睡眠'
+        },
         blobs: [
-            { id: 20, r: 40, color: '#FBBF24', label: '心流', time: '10:00', note: '专注工作的感觉真好', source: 'manual' }
-        ]
+            { id: 20, sentimentTag: '能量橙/黄', label: '心流', time: '2025-11-06T10:00:00Z', note: '专注工作的感觉真好', source: '手动记录' }
+        ].map(enrichBlob)
     },
     tue5: {
         id: 'tue5',
         label: 'Tue 5',
-        dateStr: '2025年11月5日 星期三',
+        fullDate: '2025-11-05T00:00:00Z',
         emoji: '🧘‍♂️',
-        statusTitle: '历史记录',
         statusText: '平静如水，适合静坐',
-        whisper: { icon: <Sparkles size={14} />, text: '内心的宁静最珍贵' },
+        whisper: { text: '内心的宁静最仁贵' },
+        archiveLabel: {
+            emotions: '#平静 #专注 #放松',
+            events: '早起冥想 | 整理房间'
+        },
         blobs: [] // Empty date
     }
 };
@@ -495,6 +479,7 @@ function App() {
     const [isScanning, setIsScanning] = useState(false); // Device discovery modal
     const [pairingDevice, setPairingDevice] = useState(null); // Current device in setup flow
     const [onboardingInput, setOnboardingInput] = useState(''); // Textarea content for onboarding/manual
+    const [entrySource, setEntrySource] = useState('手动记录'); // '手动记录', '对话提取', '录音记录'
     const [isLoggedIn, setIsLoggedIn] = useState(false);
     const [phoneNumber, setPhoneNumber] = useState('');
     const [showLogin, setShowLogin] = useState(true);
@@ -508,23 +493,34 @@ function App() {
     const [voiceVolume, setVoiceVolume] = useState(0); // 0-100 for animation
     const [isProcessing, setIsProcessing] = useState(false); // Whether waiting for final STT
     const [interimText, setInterimText] = useState(''); // Real-time transcribed text
+    const recognitionRef = useRef(null);
     const audioContextRef = useRef(null);
     const analyserRef = useRef(null);
     const animationFrameRef = useRef(null);
-    const recognitionRef = useRef(null);
     const initialTextRef = useRef(''); // 记录录音开始前的文字
+    const longPressTimerRef = useRef(null);
 
     // 启动语音监控与识别
-    const startVoice = async (context) => {
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            setVoiceContext(context);
-            setIsVoiceActive(true);
-            setIsProcessing(false);
-            setInterimText('');
+    const startVoice = async (context, freshStart = false) => {
+        if (isVoiceActive || recognitionRef.current) return;
 
+        setVoiceContext(context);
+        setIsVoiceActive(true);
+        setIsProcessing(false);
+        setInterimText('');
+
+        if (freshStart) {
+            if (context === 'onboarding') setOnboardingInput('');
+            initialTextRef.current = '';
+        }
+
+        try {
             // 记录当前输入框的内容，作为“底色”
-            initialTextRef.current = context === 'chat' ? chatInput : onboardingInput;
+            if (!freshStart) {
+                initialTextRef.current = context === 'chat' ? chatInput : onboardingInput;
+            }
+
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
             // 1. Audio Visualizer Setup
             const audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -585,6 +581,7 @@ function App() {
             }
         } catch (err) {
             console.error("Microphone access denied:", err);
+            setIsVoiceActive(false);
             alert("请授予麦克风权限以使用语音功能");
         }
     };
@@ -672,7 +669,7 @@ function App() {
 
     const isHeaderEmpty = selectedDate === 'today' && todayBlobs.length === 0;
     const headerEmoji = isHeaderEmpty ? '\u2728' : currentData.emoji;
-    const headerStatusIcon = isHeaderEmpty ? <Sparkles size={14} /> : currentData.whisper.icon;
+    const headerStatusIcon = <Sparkles size={14} />;
     const headerBg = EMOTION_COLORS[headerEmoji] || EMOTION_COLORS['default'];
 
     const headerStatusContent = isHeaderEmpty ? (
@@ -693,6 +690,31 @@ function App() {
     const [chatSessions, setChatSessions] = useState([]);
     const chatEndRef = useRef(null);
     const messagesEndRef = useRef(null);
+    const inactivityTimerRef = useRef(null);
+
+    // --- 不活跃检测 (10分钟自动结项) ---
+    const resetInactivityTimer = () => {
+        if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
+
+        // 仅在聊天页面、且有未关闭的会话时计时
+        if (currentPage === 'chat' && chatSessions.length > 0) {
+            const lastSession = chatSessions[chatSessions.length - 1];
+            if (lastSession && !lastSession.isClosed) {
+                inactivityTimerRef.current = setTimeout(() => {
+                    console.log('[Inactivity] 10分钟未操作，自动结项');
+                    handleEndSession();
+                }, 10 * 60 * 1000); // 10分钟
+            }
+        }
+    };
+
+    // 每次会话更新或切换回聊天页时重置计时
+    useEffect(() => {
+        resetInactivityTimer();
+        return () => {
+            if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
+        };
+    }, [chatSessions, currentPage]);
 
     // Auto-scroll to bottom when chat opens or sessions change
     useEffect(() => {
@@ -717,18 +739,47 @@ function App() {
         }
     }, [currentPage, chatSessions]);
 
-    const startNewSession = (initialMessages = []) => {
+    const startNewSession = (initialMessages = [], relatedBlobId = null) => {
         const now = new Date();
-        const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        const dateStr = `${now.getFullYear()}/${now.getMonth() + 1}/${now.getDate()}`;
 
-        const newSession = {
-            id: Date.now(),
-            timestamp: `${dateStr} · ${timeStr}`,
-            messages: initialMessages
-        };
+        // 1. Auto-close previous active session if exists
+        setChatSessions(prev => {
+            const lastSession = prev[prev.length - 1];
+            if (lastSession && !lastSession.isClosed) {
+                const endCardContent = '\u8fd9\u4e00\u6bb5\u5bf9\u8bdd\u5148\u653e\u5728\u8fd9\u91cc\uff0c\u4f60\u4eca\u5929\u5df2\u7ecf\u5f88\u68d2\u4e86\u3002';
+                const closedSession = { ...lastSession, isClosed: true, endCardContent, closedAt: now.toISOString() };
+                const otherSessions = prev.slice(0, -1);
 
-        setChatSessions(prev => [...prev, newSession]);
+                // Add the new session after closing the previous one
+                const messagesWithISO = initialMessages.map(m => ({
+                    ...m,
+                    timestamp: m.timestamp || now.toISOString()
+                }));
+
+                const newSession = {
+                    id: Date.now(),
+                    startTime: now.toISOString(),
+                    messages: messagesWithISO,
+                    relatedBlobIds: relatedBlobId ? [relatedBlobId] : []
+                };
+
+                return [...otherSessions, closedSession, newSession];
+            } else {
+                // Just add new session
+                const messagesWithISO = initialMessages.map(m => ({
+                    ...m,
+                    timestamp: m.timestamp || now.toISOString()
+                }));
+
+                const newSession = {
+                    id: Date.now(),
+                    startTime: now.toISOString(),
+                    messages: messagesWithISO,
+                    relatedBlobIds: relatedBlobId ? [relatedBlobId] : []
+                };
+                return [...prev, newSession];
+            }
+        });
     };
 
     // 切换到对话页时的自动引导 (Proactive Greeting)
@@ -747,7 +798,7 @@ function App() {
     const handleSendMessage = () => {
         if (!chatInput.trim()) return;
 
-        const userMsg = { type: 'user', text: chatInput };
+        const userMsg = { type: 'user', text: chatInput, timestamp: new Date().toISOString() };
         setChatSessions(prev => {
             const lastSession = prev[prev.length - 1];
             const otherSessions = prev.slice(0, -1);
@@ -759,11 +810,13 @@ function App() {
         setTimeout(() => {
             setChatSessions(prev => {
                 const lastSession = prev[prev.length - 1];
+                if (!lastSession) return prev;
                 const otherSessions = prev.slice(0, -1);
                 return [...otherSessions, {
                     ...lastSession, messages: [...lastSession.messages, {
                         type: 'ai',
-                        text: '我在听。感觉这个瞬间对你很重要呢，想再多分享一点吗？'
+                        text: '我在听。感觉这个瞬间对你很重要呢，想再多分享一点吗？',
+                        timestamp: new Date().toISOString()
                     }]
                 }];
             });
@@ -784,7 +837,7 @@ function App() {
             if (lastSession && lastSession.isClosed) return prev;
             const otherSessions = prev.slice(0, -1);
             const endCardContent = '\u8fd9\u4e00\u6bb5\u5bf9\u8bdd\u5148\u653e\u5728\u8fd9\u91cc\uff0c\u4f60\u4eca\u5929\u5df2\u7ecf\u5f88\u68d2\u4e86\u3002';
-            return [...otherSessions, { ...lastSession, isClosed: true, endCardContent }];
+            return [...otherSessions, { ...lastSession, isClosed: true, endCardContent, closedAt: new Date().toISOString() }];
         });
 
         requestEventMemoryExtraction(lastSnapshot);
@@ -794,9 +847,16 @@ function App() {
     useEffect(() => {
         if (isLoggedIn && currentPage === 'home' && !pendingPush) {
             const timer = setTimeout(() => {
-                const undiscussed = todayBlobs.filter(b => !discussedIds.has(b.id));
-                if (undiscussed.length > 0) {
-                    const target = undiscussed[Math.floor(Math.random() * undiscussed.length)];
+                const undiscussedIdsList = todayBlobs.filter(b => !discussedIds.has(b.id)).map(b => b.id);
+
+                // Simulate: POST /api/notifications/suggest { undiscussedBlobIds: [...] }
+                console.log('[Notification-API] Requesting suggestion with IDs:', undiscussedIdsList.length > 0 ? undiscussedIdsList : null);
+
+                if (undiscussedIdsList.length > 0) {
+                    // Randomly pick one as the "Backend choice"
+                    const targetId = undiscussedIdsList[Math.floor(Math.random() * undiscussedIdsList.length)];
+                    const target = todayBlobs.find(b => b.id === targetId);
+
                     setPendingPush({
                         id: target.id,
                         title: 'Mochi 刚才在想...',
@@ -804,7 +864,7 @@ function App() {
                         blob: target
                     });
                 }
-            }, 12000); // 12 seconds
+            }, 12000); // 12 seconds for demo purposes
             return () => clearTimeout(timer);
         }
     }, [isLoggedIn, currentPage, todayBlobs, discussedIds, pendingPush]);
@@ -830,7 +890,7 @@ function App() {
                 label: '新记录',
                 time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
                 note: firstExpression,
-                source: 'manual'
+                source: entrySource
             };
             setTodayBlobs(prev => [...prev, newBlob]);
 
@@ -844,6 +904,8 @@ function App() {
             }
         }
         setOnboardingStep(2); // 完成
+        setOnboardingInput(''); // 清空输入，防止下次打开时残留
+        setEntrySource('手动记录'); // 重置为默认
         // Stay on current page (Home) instead of switching to chat
     };
 
@@ -949,7 +1011,7 @@ function App() {
                             <div className="onboarding-content" style={{ width: '100%' }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                     <h1 className="onboarding-title" style={{ fontSize: '24px', marginBottom: 0 }}>现在的感受...</h1>
-                                    <span onClick={() => { setTodayBlobs(prev => [...prev]); setOnboardingStep(2); }} style={{ color: '#9CA3AF', fontSize: '14px', cursor: 'pointer' }}>跳过</span>
+                                    <span onClick={() => { setOnboardingInput(''); setOnboardingStep(2); }} style={{ color: '#9CA3AF', fontSize: '14px', cursor: 'pointer' }}>跳过</span>
                                 </div>
                                 <div className="expression-input-area">
                                     <div style={{ position: 'relative' }}>
@@ -1019,8 +1081,8 @@ function App() {
                             >
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '12px' }}>
                                     <div>
-                                        <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#111827' }}>{currentData.dateStr.split(' ')[0]}</h1>
-                                        <p style={{ fontSize: '13px', color: '#6B7280', marginTop: '2px' }}>{currentData.dateStr.split(' ')[1]}</p>
+                                        <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#111827' }}>{formatToDate(currentData.fullDate)}</h1>
+                                        <p style={{ fontSize: '13px', color: '#6B7280', marginTop: '2px' }}>{formatToWeekday(currentData.fullDate)}</p>
                                     </div>
                                     <div style={{ fontSize: '28px' }}>{headerEmoji}</div>
                                 </div>
@@ -1045,7 +1107,7 @@ function App() {
                                             className={`roller-item ${isActive ? 'active' : ''} ${!hasData ? 'disabled' : 'has-data'}`}
                                             onClick={() => hasData && setSelectedDate(key)}
                                         >
-                                            {data.label}
+                                            {getTimeLabel(data.fullDate)}
                                             {isActive && <div className="active-dot" />}
                                         </div>
                                     );
@@ -1066,27 +1128,76 @@ function App() {
                             </div>
 
                             <div style={{ position: 'absolute', bottom: '84px', right: '16px', zIndex: 100 }}>
-                                {/* Manual Entry - Disabled in History Mode */}
+                                {/* Manual Entry - Long-press to record directly */}
                                 <motion.button
-                                    className="home-fab"
+                                    className={`home-fab ${isVoiceActive && voiceContext === 'onboarding' ? 'recording' : ''}`}
                                     whileHover={selectedDate === 'today' ? { scale: 1.05 } : {}}
                                     whileTap={selectedDate === 'today' ? { scale: 0.95 } : {}}
-                                    onClick={() => {
+                                    {...(selectedDate === 'today' ? micHandlers('onboarding') : {})}
+                                    onPointerDown={(e) => {
                                         if (selectedDate !== 'today') return;
-                                        setOnboardingInput('');
+                                        e.preventDefault();
+                                        // Start fresh voice session
+                                        setEntrySource('手动记录');
+                                        startVoice('onboarding', true);
+                                        longPressTimerRef.current = setTimeout(() => {
+                                            // Just to mark it as a long press internally if needed
+                                        }, 400);
+                                    }}
+                                    onPointerUp={(e) => {
+                                        if (selectedDate !== 'today') return;
+                                        e.preventDefault();
+                                        const duration = Date.now() - (e.timeStamp || Date.now()); // Simple check
+
+                                        stopVoice();
+                                        if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+
+                                        // Go to entry screen
                                         setOnboardingStep(1);
                                     }}
+                                    onPointerLeave={() => {
+                                        if (isVoiceActive) stopVoice();
+                                        if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+                                    }}
                                     style={{
-                                        background: selectedDate === 'today' ? 'white' : 'rgba(255, 255, 255, 0.4)', // Semi-transparent
+                                        background: isVoiceActive && voiceContext === 'onboarding'
+                                            ? 'linear-gradient(135deg, #A78BFA, #818CF8)'
+                                            : (selectedDate === 'today' ? 'white' : 'rgba(255, 255, 255, 0.4)'),
                                         width: '56px', height: '56px', borderRadius: '28px',
                                         boxShadow: selectedDate === 'today' ? '0 4px 12px rgba(0,0,0,0.1)' : 'none',
                                         border: selectedDate === 'today' ? 'none' : '1px solid rgba(0,0,0,0.05)',
                                         display: 'flex', alignItems: 'center', justifyContent: 'center',
                                         cursor: selectedDate === 'today' ? 'pointer' : 'default',
-                                        opacity: selectedDate === 'today' ? 1 : 0.6 // Reduce opacity
+                                        opacity: selectedDate === 'today' ? 1 : 0.6,
+                                        position: 'relative',
+                                        overflow: 'visible',
+                                        touchAction: 'none'
                                     }}
                                 >
-                                    <Plus size={24} color={selectedDate === 'today' ? "#6B7280" : "#9CA3AF"} />
+                                    {isVoiceActive && voiceContext === 'onboarding' && (
+                                        <motion.div
+                                            layoutId="fab-pulse"
+                                            initial={{ scale: 0.8, opacity: 0.5 }}
+                                            animate={{ scale: 1.8, opacity: 0 }}
+                                            transition={{ repeat: Infinity, duration: 1.5 }}
+                                            style={{
+                                                position: 'absolute',
+                                                inset: 0,
+                                                borderRadius: '50%',
+                                                background: 'rgba(167, 139, 250, 0.5)',
+                                                zIndex: -1
+                                            }}
+                                        />
+                                    )}
+                                    <Plus
+                                        size={24}
+                                        color={isVoiceActive && voiceContext === 'onboarding' ? "#FFFFFF" : (selectedDate === 'today' ? "#6B7280" : "#9CA3AF")}
+                                        style={{
+                                            transform: isVoiceActive && voiceContext === 'onboarding' ? 'scale(1.2)' : 'scale(1)',
+                                            transition: 'transform 0.2s ease, color 0.2s ease'
+                                        }}
+                                        className={isVoiceActive && voiceContext === 'onboarding' ? "animate-pulse" : ""}
+                                    />
                                 </motion.button>
                             </div>
 
@@ -1145,8 +1256,8 @@ function App() {
                                                 onClick={() => {
                                                     const latestBlob = todayBlobs[todayBlobs.length - 1];
                                                     startNewSession([
-                                                        { type: 'user', text: `关于【${latestBlob.label}】...` },
-                                                        { type: 'ai', text: '我在听。想聊聊这个瞬间吗？' }
+                                                        { type: 'user', text: `我想聊聊“${latestBlob.note}”这件事儿` },
+                                                        { type: 'ai', text: '我在听。感觉这个瞬间对你很重要呢，想再多分享一点吗？' }
                                                     ]);
                                                     setShowTooltip(false);
                                                     setCurrentPage('chat');
@@ -1260,18 +1371,21 @@ function App() {
                                 {chatSessions.map((session) => (
                                     <div key={session.id} style={{ marginBottom: '30px' }}>
                                         <div style={{ textAlign: 'center', margin: '20px 0', opacity: 0.8 }}>
-                                            <p style={{ fontSize: '12px', color: '#9CA3AF', fontWeight: 500 }}>{session.timestamp}</p>
+                                            <p style={{ fontSize: '12px', color: '#9CA3AF', fontWeight: 500 }}>{formatToSessionTime(session.startTime)}</p>
                                         </div>
                                         {session.messages.map((msg, i) => (
                                             <div key={i} className={`chat-bubble ${msg.type}`}>
                                                 {msg.text}
+                                                <span style={{ fontSize: '10px', opacity: 0.6, display: 'block', marginTop: '4px', textAlign: msg.type === 'user' ? 'right' : 'left' }}>
+                                                    {formatToHHmm(msg.timestamp)}
+                                                </span>
                                             </div>
                                         ))}
                                         {session.isClosed && (
                                             <div>
                                                 <div className="saved-indicator" style={{ marginBottom: '0', marginTop: '16px' }}>
                                                     <div className="dot" />
-                                                    <span>{`\u5df2\u5c01\u5b58\u4e8e ${session.timestamp}`}</span>
+                                                    <span>{`\u5df2\u5c01\u5b58\u4e8e ${formatToSessionTime(session.closedAt)}`}</span>
                                                 </div>
                                                 <div className="session-end-card" style={{ flexShrink: 0, marginTop: '12px' }}>
                                                     <div className="end-card-shine" />
@@ -1498,16 +1612,28 @@ function App() {
                                         </div>
                                         <X size={20} color="#9CA3AF" onClick={() => setSelectedBlob(null)} style={{ cursor: 'pointer' }} />
                                     </div>
-                                    <p style={{ fontSize: '12px', color: '#9CA3AF', marginTop: '4px' }}>{selectedBlob.time}</p>
-                                    <p style={{ fontSize: '15px', color: '#4B5563', marginTop: '12px', lineHeight: 1.6 }}>{selectedBlob.note}</p>
+                                    <p style={{ fontSize: '12px', color: '#9CA3AF', marginTop: '4px' }}>{formatToHHmm(selectedBlob.time)}</p>
+                                    <p style={{
+                                        fontSize: '15px',
+                                        color: '#4B5563',
+                                        marginTop: '12px',
+                                        lineHeight: 1.6,
+                                        display: '-webkit-box',
+                                        WebkitLineClamp: 6,
+                                        WebkitBoxOrient: 'vertical',
+                                        overflow: 'hidden',
+                                        textOverflow: 'ellipsis'
+                                    }}>
+                                        {selectedBlob.note}
+                                    </p>
 
                                     {/* Chat about this button */}
                                     <button
                                         onClick={() => {
                                             startNewSession([
-                                                { type: 'user', text: `关于【${selectedBlob.label}】...` },
-                                                { type: 'ai', text: '我在听。想聊聊这个瞬间吗？' }
-                                            ]);
+                                                { type: 'user', text: `我想聊聊“${selectedBlob.note}”这件事儿` },
+                                                { type: 'ai', text: '我在听。感觉这个瞬间对你很重要呢，想再多分享一点吗？' }
+                                            ], selectedBlob.id);
                                             setDiscussedIds(prev => new Set([...prev, selectedBlob.id]));
                                             setSelectedBlob(null);
                                             setCurrentPage('chat');
@@ -1742,7 +1868,8 @@ function App() {
                         exit={{ opacity: 0, y: -100 }}
                         onClick={() => {
                             startNewSession([
-                                { type: 'ai', text: `嗨！看到你刚才记录了【${pendingPush.blob.label}】，那个瞬间现在感觉好些了吗？` }
+                                { type: 'user', text: `我想聊聊“${pendingPush.blob.note}”这件事儿` },
+                                { type: 'ai', text: `我在听。看到你刚才记录了【${pendingPush.blob.label}】，那个瞬间现在感觉好些了吗？` }
                             ]);
                             setDiscussedIds(prev => new Set([...prev, pendingPush.id]));
                             setPendingPush(null);

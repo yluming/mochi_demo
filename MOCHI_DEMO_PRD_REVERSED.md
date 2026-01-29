@@ -87,11 +87,9 @@ Demo 实现了基础的手机号登录逻辑，用于区分用户数据。
 | `label` | String | 滚动条显示的简写 (如 `Tue 5`, `Today`) | 顶部滚动条标签 |
 | `dateStr` | String | 头部显示的完整日期 (如 `2025年11月9日`) | 页面左上角大标题 |
 | `emoji` | String | 当日主情绪 Emoji | **页面右上角图标** |
-| `statusTitle` | String | 状态卡片的标题 (如 `今日状态`) | (逻辑字段) 定位内容性质 |
 | `statusText` | String | 首页状态卡片的文字描述 | **白色胶囊卡片主文本** |
-| `whisper.icon` | Object | 状态卡片的图标 | **白色胶囊卡片前置 Icon** |
 | `blobs` | Array | 当日捕捉到的碎片列表 (详见 3.1) | 罐头内的彩色圆球 |
-| `events` | Array | 当日关键事件列表 (Emoji + 文本) | **历史模式下的收银小票** |
+| `archiveLabel` | Object | 当日档案标签 (#情绪 + 事件|关键词) | **历史模式下的收银小票** |
 | `whisper.text` | String | 深度观察文本 | (预留字段) 暂不直接显示 |
 
 #### 2.1.1 历史模式 (History Mode)
@@ -158,7 +156,7 @@ Demo 实现了基础的手机号登录逻辑，用于区分用户数据。
   "label": "String (关键词)",
   "time": "String (捕捉时间点)",
   "note": "String (详细记录/日记内容)",
-  "source": "manual / chat / auto",
+  "source": "手动记录 (App) / 对话提取 (AI) / 录音记录 (戒指)",
   "isDiscussed": "Boolean (是否已被讨论过，影响视觉状态)"
 }
 ```
@@ -182,7 +180,17 @@ Demo 实现了基础的手机号登录逻辑，用于区分用户数据。
 **新增字段说明**:
 - `relatedBlobId`: 用于关联该对话是从哪个 Blob 发起的，方便后续分析和状态同步。
 
-### 3.3 User Profile (用户信息)
+### 3.3 自动结项机制 (Auto-Session-Close)
+- **逻辑**: 如果用户在聊天界面停留且 10 分钟没有发送新消息，前端将触发自动封存。
+- **流程**:
+  1. 重置不活跃计时器（每次消息发送/接收时）。
+  2. 计时器归零时，前端调用 `/api/chat/sessions/{id}/close`。
+  3. UI 展示 AI 生成的结语卡片，并锁定输入框。
+  4. 后端基于此会话内容进行"记忆提取"，生成新的情绪碎片。
+
+---
+
+### 3.4 User Profile (用户信息)
 ```json
 {
   "id": "user_id",
