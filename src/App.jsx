@@ -218,7 +218,7 @@ const JarPhysics = ({ onSelect, height, blobs, isArchive, isUnsealed, onUnseal, 
                     width: '100%',
                     height: '100%',
                     overflow: 'visible',
-                    filter: (isArchive && !isUnsealed) ? 'brightness(0.9) grayscale(0.15)' : 'none',
+                    filter: (isArchive && !isUnsealed) ? 'opacity(0.15) saturate(0.8)' : 'none',
                     transition: 'filter 0.8s ease'
                 }}
             >
@@ -365,10 +365,10 @@ const JarPhysics = ({ onSelect, height, blobs, isArchive, isUnsealed, onUnseal, 
                             <div className="receipt-list">
                                 {archiveData.archiveLabel ? (
                                     <>
-                                        <div className="receipt-emotions" style={{ fontSize: '16px', fontWeight: 600, color: '#4B3F35', marginBottom: '8px' }}>
+                                        <div className="receipt-emotions" style={{ fontSize: '16px', fontWeight: 600, color: '#1F2937', marginBottom: '8px' }}>
                                             {archiveData.archiveLabel.emotions}
                                         </div>
-                                        <div className="receipt-events" style={{ fontSize: '13px', opacity: 0.8, color: '#5D4336' }}>
+                                        <div className="receipt-events" style={{ fontSize: '13px', color: '#6B7280' }}>
                                             {archiveData.archiveLabel.events}
                                         </div>
                                     </>
@@ -389,12 +389,20 @@ const JarPhysics = ({ onSelect, height, blobs, isArchive, isUnsealed, onUnseal, 
     );
 };
 
+// --- Dynamic Date Helpers for MOCK_DATA ---
+const getRelDate = (offsetDays) => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() - offsetDays);
+    return d.toISOString();
+};
+
 // --- Mock Data ---
 const MOCK_DATA = {
     today: {
         id: 'today',
         label: 'Today',
-        fullDate: '2025-11-09T00:00:00Z',
+        fullDate: getRelDate(0),
         emoji: '😇',
         statusText: '情绪起起伏伏，你始终能把自己接住',
         whisper: { text: '听起来你现在需要一点点安静的空间...' },
@@ -403,7 +411,7 @@ const MOCK_DATA = {
     yesterday: {
         id: 'yesterday',
         label: 'Yesterday',
-        fullDate: '2025-11-08T00:00:00Z',
+        fullDate: getRelDate(1),
         emoji: '😌',
         statusText: '虽然有些波折，但最后还是找到了平静',
         whisper: { text: '这是你昨天留下的记录' },
@@ -412,14 +420,14 @@ const MOCK_DATA = {
             events: '加班 | 深夜散步 | 放空'
         },
         blobs: [
-            { id: 10, sentimentTag: '沉思紫/灰', label: '疲惫', time: '2025-11-08T22:30:00Z', note: '洗完澡感觉好多了', source: '手动记录' },
-            { id: 11, sentimentTag: '沉思紫/灰', label: '思考', time: '2025-11-08T14:00:00Z', note: '关于未来的计划...', source: '对话提取' },
+            { id: 10, sentimentTag: '沉思紫/灰', label: '疲惫', time: getRelDate(1), note: '洗完澡感觉好多了', source: '手动记录' },
+            { id: 11, sentimentTag: '沉思紫/灰', label: '思考', time: getRelDate(1), note: '关于未来的计划...', source: '对话提取' },
         ].map(enrichBlob)
     },
-    thu7: {
-        id: 'thu7',
-        label: 'Thu 7',
-        fullDate: '2025-11-07T00:00:00Z',
+    day3: {
+        id: 'day3',
+        label: 'day3',
+        fullDate: getRelDate(2),
         emoji: '😴',
         statusText: '那天你好像睡了很久...',
         whisper: { text: '深度睡眠是最好的治愈' },
@@ -429,10 +437,10 @@ const MOCK_DATA = {
         },
         blobs: [] // Empty date
     },
-    wed6: {
-        id: 'wed6',
-        label: 'Wed 6',
-        fullDate: '2025-11-06T00:00:00Z',
+    day4: {
+        id: 'day4',
+        label: 'day4',
+        fullDate: getRelDate(3),
         emoji: '⚡️',
         statusText: '能量满满的一天，效率很高',
         whisper: { text: '这是你的高效时刻' },
@@ -441,13 +449,13 @@ const MOCK_DATA = {
             events: '项目上线 | 团队聚餐 | 好的睡眠'
         },
         blobs: [
-            { id: 20, sentimentTag: '能量橙/黄', label: '心流', time: '2025-11-06T10:00:00Z', note: '专注工作的感觉真好', source: '手动记录' }
+            { id: 20, sentimentTag: '能量橙/黄', label: '心流', time: getRelDate(3), note: '专注工作的感觉真好', source: '手动记录' }
         ].map(enrichBlob)
     },
-    tue5: {
-        id: 'tue5',
-        label: 'Tue 5',
-        fullDate: '2025-11-05T00:00:00Z',
+    day5: {
+        id: 'day5',
+        label: 'day5',
+        fullDate: getRelDate(4),
         emoji: '🧘‍♂️',
         statusText: '平静如水，适合静坐',
         whisper: { text: '内心的宁静最仁贵' },
@@ -729,12 +737,15 @@ function App() {
 
             // Initial scroll
             const timer1 = setTimeout(scrollToBottom, 50);
-            // Stronger scroll after animation likely finishes
-            const timer2 = setTimeout(scrollToBottom, 600);
+            // Intermediate scroll (good for general transitions)
+            const timer2 = setTimeout(scrollToBottom, 300);
+            // Stronger scroll after animation definitely finishes (800ms for safety with springs)
+            const timer3 = setTimeout(scrollToBottom, 800);
 
             return () => {
                 clearTimeout(timer1);
                 clearTimeout(timer2);
+                clearTimeout(timer3);
             };
         }
     }, [currentPage, chatSessions]);
@@ -1201,89 +1212,6 @@ function App() {
                                 </motion.button>
                             </div>
 
-                            {/* Post-Onboarding Modal */}
-                            {showTooltip && (
-                                <div
-                                    className="modal-overlay"
-                                    onClick={() => setShowTooltip(false)}
-                                    style={{ zIndex: 300 }}
-                                >
-                                    <motion.div
-                                        initial={{ opacity: 0, y: 100 }}
-                                        animate={{ opacity: 1, y: 0 }}
-                                        exit={{ opacity: 0, y: 100 }}
-                                        transition={{ type: 'spring', damping: 30, stiffness: 180, mass: 1.2 }}
-                                        onClick={(e) => e.stopPropagation()}
-                                        style={{
-                                            background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.95), rgba(252, 231, 243, 0.9))',
-                                            backdropFilter: 'blur(20px)',
-                                            WebkitBackdropFilter: 'blur(20px)',
-                                            borderRadius: '24px',
-                                            padding: '32px 28px',
-                                            maxWidth: '340px',
-                                            width: '90%',
-                                            boxShadow: '0 20px 60px rgba(167, 139, 250, 0.15)',
-                                            border: '1px solid rgba(255, 255, 255, 0.8)',
-                                            position: 'relative'
-                                        }}
-                                    >
-                                        {/* Close button */}
-                                        <X
-                                            size={20}
-                                            color="#9CA3AF"
-                                            onClick={() => setShowTooltip(false)}
-                                            style={{
-                                                cursor: 'pointer',
-                                                position: 'absolute',
-                                                top: '16px',
-                                                right: '16px'
-                                            }}
-                                        />
-
-                                        {/* Content */}
-                                        <div style={{ textAlign: 'center' }}>
-                                            <div style={{ fontSize: '48px', marginBottom: '12px' }}>🎉</div>
-                                            <h3 style={{ fontSize: '18px', fontWeight: 600, color: '#1F2937', marginBottom: '8px' }}>
-                                                恭喜你存储了第一个记忆碎片！
-                                            </h3>
-                                            <p style={{ fontSize: '14px', color: '#6B7280', lineHeight: 1.6, marginBottom: '24px' }}>
-                                                每一个情绪瞬间都值得被倾听。<br />
-                                                试着和 Mochi 聊聊这个瞬间吧～
-                                            </p>
-
-                                            {/* CTA Button */}
-                                            <button
-                                                onClick={() => {
-                                                    const latestBlob = todayBlobs[todayBlobs.length - 1];
-                                                    startNewSession([
-                                                        { type: 'user', text: `我想聊聊“${latestBlob.note}”这件事儿` },
-                                                        { type: 'ai', text: '我在听。感觉这个瞬间对你很重要呢，想再多分享一点吗？' }
-                                                    ]);
-                                                    setShowTooltip(false);
-                                                    setCurrentPage('chat');
-                                                }}
-                                                style={{
-                                                    width: '100%',
-                                                    padding: '12px 20px',
-                                                    background: 'linear-gradient(135deg, #A78BFA, #818CF8)',
-                                                    border: 'none',
-                                                    borderRadius: '16px',
-                                                    color: 'white',
-                                                    fontSize: '15px',
-                                                    fontWeight: 600,
-                                                    cursor: 'pointer',
-                                                    boxShadow: '0 4px 12px rgba(167, 139, 250, 0.3)',
-                                                    transition: 'all 0.2s ease'
-                                                }}
-                                                onMouseEnter={(e) => e.target.style.transform = 'translateY(-2px)'}
-                                                onMouseLeave={(e) => e.target.style.transform = 'translateY(0)'}
-                                            >
-                                                💬 聊聊这个瞬间
-                                            </button>
-                                        </div>
-                                    </motion.div>
-                                </div>
-                            )}
                         </motion.div>
                     )}
 
@@ -1662,6 +1590,75 @@ function App() {
                                         聊聊这个瞬间
                                     </button>
                                 </div>
+                            </div>
+                        </motion.div>
+                    </div>
+                )}
+
+                {/* Post-Onboarding Modal */}
+                {showTooltip && (
+                    <div key="onboarding-success" className="modal-overlay" onClick={() => setShowTooltip(false)}>
+                        <motion.div
+                            initial={{ opacity: 0, scale: 0.9, y: 100 }}
+                            animate={{ opacity: 1, scale: 1, y: 0 }}
+                            exit={{ opacity: 0, scale: 0.9, y: 100 }}
+                            transition={{ type: 'spring', damping: 30, stiffness: 180, mass: 1.2 }}
+                            onClick={(e) => e.stopPropagation()}
+                            style={{
+                                background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.95), rgba(252, 231, 243, 0.9))',
+                                backdropFilter: 'blur(20px)',
+                                WebkitBackdropFilter: 'blur(20px)',
+                                borderRadius: '24px',
+                                padding: '32px 28px',
+                                maxWidth: '340px',
+                                width: '90%',
+                                boxShadow: '0 20px 60px rgba(167, 139, 250, 0.15)',
+                                border: '1px solid rgba(255, 255, 255, 0.8)',
+                                position: 'relative'
+                            }}
+                        >
+                            <X
+                                size={20}
+                                color="#9CA3AF"
+                                onClick={() => setShowTooltip(false)}
+                                style={{ cursor: 'pointer', position: 'absolute', top: '16px', right: '16px' }}
+                            />
+                            <div style={{ textAlign: 'center' }}>
+                                <div style={{ fontSize: '48px', marginBottom: '12px' }}>🎉</div>
+                                <h3 style={{ fontSize: '18px', fontWeight: 600, color: '#1F2937', marginBottom: '8px' }}>
+                                    恭喜你存储了第一个情绪碎片！
+                                </h3>
+                                <p style={{ fontSize: '14px', color: '#6B7280', lineHeight: 1.6, marginBottom: '24px' }}>
+                                    每一个情绪瞬间都值得被倾听。<br />
+                                    试着和 Mochi 聊聊这个瞬间吧～
+                                </p>
+                                <button
+                                    onClick={() => {
+                                        const latestBlob = todayBlobs[todayBlobs.length - 1];
+                                        startNewSession([
+                                            { type: 'user', text: `我想聊聊“${latestBlob.note}”这件事儿` },
+                                            { type: 'ai', text: '我在听。感觉这个瞬间对你很重要呢，想再多分享一点吗？' }
+                                        ], latestBlob.id);
+                                        setDiscussedIds(prev => new Set([...prev, latestBlob.id]));
+                                        setShowTooltip(false);
+                                        setCurrentPage('chat');
+                                    }}
+                                    style={{
+                                        width: '100%',
+                                        padding: '12px 20px',
+                                        background: 'linear-gradient(135deg, #A78BFA, #818CF8)',
+                                        border: 'none',
+                                        borderRadius: '16px',
+                                        color: 'white',
+                                        fontSize: '15px',
+                                        fontWeight: 600,
+                                        cursor: 'pointer',
+                                        boxShadow: '0 4px 12px rgba(167, 139, 250, 0.3)',
+                                        transition: 'all 0.2s ease'
+                                    }}
+                                >
+                                    💬 聊聊这个瞬间
+                                </button>
                             </div>
                         </motion.div>
                     </div>
