@@ -10,7 +10,7 @@
 | 字段名 | 类型 | 说明 |
 | :--- | :--- | :--- |
 | `userId` | String | 用户唯一 ID |
-| `phoneNumber` | String | 完整手机号 |
+| `username` | String | 完整手机号 (作为账号标识符) |
 | `phoneSuffix` | String | 手机后四位 |
 | `avatar` | String | 头像 URL |
 | `createdAt` | String | 账号创建时间 (RFC3339) |
@@ -55,6 +55,7 @@
 | `note` | String | 用户录入或转录的详细文本 |
 | `source` | Enum | 来源: `手动记录` (App内打字/语音)、`对话提取` (聊天总结)、`录音记录` (戒指录音) |
 | `isDiscussed` | Boolean | 标记该碎片是否已被讨论 (影响视觉光晕) |
+| `isUnread` | Boolean | **[MOCK]** 标记该碎片是否为用户未读的新增内容 (影响首页 Ripple 动效) |
 
 ---
 
@@ -66,7 +67,6 @@
 | `userId` | String | 所属用户 ID |
 | `sessionId` | String | 会话唯一 ID |
 | `startTime` | String | 会话开始时间 (RFC3339) |
-| `messages` | Array | 包含 `Message` 对象的数组 |
 | `isClosed` | Boolean | 会话是否已结束并生成了总结卡片 |
 | `closedAt` | String | 会话封存时间 (RFC3339) |
 | `endCardContent`| String | 会话结束后展示的结语总结文案 |
@@ -82,6 +82,7 @@
 | `sessionId` | String | 所属会话 ID |
 | `type` | Enum | 发送方: `ai` 或 `user` |
 | `text` | String | 消息的具体文本内容 |
+| `show_text` | String | 用户真实前端展示文本 |
 | `timestamp` | String | 消息发送时间 (RFC3339) |
 
 ---

@@ -12,4 +12,11 @@ export const SENTIMENT_PALETTES = {
     '波动粉/红': ["#F472B6", "#FB7185", "#EC4899"]
 };
 
+export const HEADER_GRADIENTS = {
+    '治愈/清新': 'linear-gradient(135deg, #A5F3FC, #BBF7D0)',
+    '积极/能量': 'linear-gradient(135deg, #FDE68A, #FEF3C7)',
+    '沉思/疲惫': 'linear-gradient(135deg, #DDD6FE, #F5F3FF)',
+    '敏感/波动': 'linear-gradient(135deg, #F9A8D4, #FDF2F8)'
+};
+
 export const PEARL_TINTS = ['#F9FAFB', '#F0F9FF', '#F5F3FF', '#F0FDF4', '#FFF1F2'];

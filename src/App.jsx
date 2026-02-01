@@ -2,25 +2,28 @@ import React, { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
     Heart, MessageCircle, Radio, Signal, Wifi, Battery,
-    ChevronRight, Settings, Send, User, Sparkles, X, ChevronLeft, Mic, Plus, Bell
+    ChevronRight, Settings, Send, User, Sparkles, X, ChevronLeft, Mic, Plus, Bell, PieChart
 } from 'lucide-react'
-import { formatToHHmm, formatToDate, formatToWeekday, formatToSessionTime, getTimeLabel } from './utils/timeUtils'
-import { JAR_WIDTH } from './constants/visuals'
-import { makeBlobs, makePearlBlobs, enrichBlob } from './utils/blobHelpers'
+import { formatToHHmm, formatToDate, formatToWeekday, formatToSessionTime, getTimeLabel, isDateToday } from './utils/timeUtils'
+import { JAR_WIDTH, SENTIMENT_PALETTES, HEADER_GRADIENTS } from './constants/visuals'
+import { makePearlBlobs, enrichBlob } from './utils/blobHelpers'
+import api from './services/api'
 
 
-const JarPhysics = ({ onSelect, height, blobs, isArchive, isUnsealed, onUnseal, archiveData }) => {
+const JarPhysics = ({ onSelect, height, blobs, newBlobIds, isArchive, isUnsealed, onUnseal, archiveData }) => {
     const startRef = useRef(performance.now());
     const [shimmerId, setShimmerId] = useState(null);
     const mouthX = JAR_WIDTH / 2;
     const mouthRange = 36;
-    const [items] = useState(() => {
+    const [items, setItems] = useState(() => {
         const combined = [...(blobs || []), ...makePearlBlobs()];
 
         let initialItems = combined.map((b, i) => {
             const x = mouthX + (Math.random() * 2 - 1) * (b.isPearl ? JAR_WIDTH / 2 : mouthRange);
             // Initial Y for non-archive mode (falling down)
             const y = -30 - i * 30;
+
+            const isNewest = newBlobIds && newBlobIds.has(b.id);
 
             return {
                 ...b,
@@ -33,7 +36,7 @@ const JarPhysics = ({ onSelect, height, blobs, isArchive, isUnsealed, onUnseal, 
                 tsx: 1,
                 tsy: 1,
                 active: false,
-                release: i * 100,
+                release: isNewest ? 1200 : i * 100, // Significant delay for newest
                 settled: false,
             };
         });
@@ -111,6 +114,61 @@ const JarPhysics = ({ onSelect, height, blobs, isArchive, isUnsealed, onUnseal, 
     });
     const raf = useRef(null);
     const [, setFrame] = useState(0);
+
+    // Sync blobs with physics items
+    const prevBlobsRef = useRef([]);
+    useEffect(() => {
+        if (!blobs) return;
+
+        // Simple check to avoid infinite loops if 'blobs' prop reference changes but content is same
+        const prevIds = prevBlobsRef.current.map(b => b.id).join(',');
+        const currIds = blobs.map(b => b.id).join(',');
+        if (prevIds === currIds && prevBlobsRef.current.length === blobs.length) {
+            return;
+        }
+        prevBlobsRef.current = blobs;
+
+        // Functional update to avoid direct mutation
+        setItems(prevItems => {
+            const currentBlobItems = prevItems.filter(it => !it.isPearl);
+            const pearlItems = prevItems.filter(it => it.isPearl);
+
+            // Counter for new items to stagger them
+            let newCount = 0;
+            const currentElapsed = performance.now() - startRef.current;
+
+            const updatedBlobItems = blobs.map(blob => {
+                // Match by ID OR by note (case-insensitive, trimmed) for optimistic transition
+                const targetNote = (blob.note || "").trim().toLowerCase();
+                const existing = currentBlobItems.find(it =>
+                    String(it.id) === String(blob.id) ||
+                    (it.isOptimistic && (it.note || "").trim().toLowerCase() === targetNote)
+                );
+
+                if (existing) {
+                    // Inherit physics state from existing item (whether optimistic or already synced)
+                    return { ...existing, ...blob, isOptimistic: false }; // Ensure isOptimistic is cleared
+                } else {
+                    // Stagger new items to prevent explosion
+                    const delay = newCount * 150; // 150ms gap between each new item
+                    newCount++;
+
+                    const x = mouthX + (Math.random() * 2 - 1) * mouthRange;
+                    return {
+                        ...blob,
+                        x,
+                        y: -30,
+                        vx: 0,
+                        vy: 0,
+                        active: false,
+                        release: currentElapsed + delay
+                    };
+                }
+            });
+
+            return [...updatedBlobItems, ...pearlItems];
+        });
+    }, [blobs]);
 
     // Shimmering Nudge Logic
     useEffect(() => {
@@ -285,62 +343,83 @@ const JarPhysics = ({ onSelect, height, blobs, isArchive, isUnsealed, onUnseal, 
                 />
 
                 <g clipPath="url(#jarClip)">
-                    {items.map((it, i) => (
-                        <motion.g
-                            key={it.id}
-                            style={{
-                                x: it.x,
-                                y: it.y,
-                                scaleX: it.sx,
-                                scaleY: it.sy,
-                                cursor: it.isPearl ? 'default' : 'pointer'
-                            }}
-                            animate={isUnsealed ? { scale: [1, 1.15, 1] } : {}}
-                            transition={{ duration: 0.5, ease: "backOut" }}
-                            onClick={() => !it.isPearl && onSelect(it)}
-                        >
-                            <defs>
-                                <radialGradient id={`grad-${it.id}`} cx="35%" cy="35%" r="65%">
-                                    <stop offset="0%" stopColor={it.isDiscussed ? "#FFFFFF" : it.color} stopOpacity={it.isPearl ? "0.9" : (it.isDiscussed ? "0.7" : "0.95")} />
-                                    <stop offset="100%" stopColor={it.color} stopOpacity={it.isPearl ? "0.6" : (it.isDiscussed ? "0.3" : "0.7")} />
-                                </radialGradient>
-                            </defs>
-                            <ellipse
-                                rx={it.r * 1.05}
-                                ry={it.r * 0.95}
-                                fill={`url(#grad-${it.id})`}
-                                stroke={it.isPearl ? "rgba(255,255,255,0.4)" : (it.isDiscussed ? "rgba(255,255,255,0.6)" : "none")}
-                                strokeWidth={it.isPearl ? "0.5" : (it.isDiscussed ? "2" : "0")}
-                                style={{ transition: 'opacity 0.5s ease', opacity: it.isDiscussed ? 0.6 : 1 }}
-                            />
-                            {/* Shimmer Sparkles */}
-                            {shimmerId === it.id && (
-                                <g transform="scale(0.8)">
+                    {items.map((it, i) => {
+                        const isNewest = newBlobIds && newBlobIds.has(it.id);
+                        return (
+                            <motion.g
+                                key={it.id}
+                                style={{
+                                    x: it.x,
+                                    y: it.y,
+                                    scaleX: it.sx,
+                                    scaleY: it.sy,
+                                    cursor: it.isPearl ? 'default' : 'pointer'
+                                }}
+                                animate={
+                                    isUnsealed ? { scale: [1, 1.15, 1] } :
+                                        (isNewest ? { scale: [1, 1.08, 1] } : {})
+                                }
+                                transition={
+                                    isUnsealed ? { duration: 0.5, ease: "backOut" } :
+                                        (isNewest ? { duration: 2, repeat: Infinity, ease: "easeInOut" } : {})
+                                }
+                                onClick={() => !it.isPearl && onSelect(it)}
+                            >
+                                {/* Ripple Effect for Newest Blob */}
+                                {isNewest && (
                                     <motion.circle
-                                        cx={-it.r * 0.4} cy={-it.r * 0.2} r="3" fill="white"
-                                        initial={{ opacity: 0, scale: 0 }}
-                                        animate={{ opacity: [0, 1, 0], scale: [0, 1.2, 0] }}
-                                        transition={{ duration: 1, repeat: 1 }}
+                                        r="32" // Slightly larger than blob radius (28)
+                                        fill="none"
+                                        stroke="rgba(255, 255, 255, 0.6)"
+                                        strokeWidth="2"
+                                        initial={{ opacity: 0, scale: 0.8 }}
+                                        animate={{ opacity: [0, 0.8, 0], scale: [0.8, 1.4, 1.6] }}
+                                        transition={{ duration: 2, repeat: Infinity, ease: "easeOut" }}
                                     />
-                                    <motion.circle
-                                        cx={it.r * 0.3} cy={it.r * 0.3} r="2" fill="white"
-                                        initial={{ opacity: 0, scale: 0 }}
-                                        animate={{ opacity: [0, 1, 0], scale: [0, 1.5, 0] }}
-                                        transition={{ duration: 1, delay: 0.5, repeat: 1 }}
-                                    />
-                                </g>
-                            )}
-                            {it.isPearl && (
+                                )}
+                                <defs>
+                                    <radialGradient id={`grad-${it.id}`} cx="35%" cy="35%" r="65%">
+                                        <stop offset="0%" stopColor={it.isDiscussed ? "#FFFFFF" : it.color} stopOpacity={it.isPearl ? "0.9" : (it.isDiscussed ? "0.7" : "0.95")} />
+                                        <stop offset="100%" stopColor={it.color} stopOpacity={it.isPearl ? "0.6" : (it.isDiscussed ? "0.3" : "0.7")} />
+                                    </radialGradient>
+                                </defs>
                                 <ellipse
-                                    cx={-it.r * 0.3}
-                                    cy={-it.r * 0.3}
-                                    rx={it.r * 0.3}
-                                    ry={it.r * 0.2}
-                                    fill="rgba(255, 255, 255, 0.6)"
+                                    rx={it.r * 1.05}
+                                    ry={it.r * 0.95}
+                                    fill={`url(#grad-${it.id})`}
+                                    stroke={it.isPearl ? "rgba(255,255,255,0.4)" : (it.isDiscussed ? "rgba(255,255,255,0.6)" : "none")}
+                                    strokeWidth={it.isPearl ? "0.5" : (it.isDiscussed ? "2" : "0")}
+                                    style={{ transition: 'opacity 0.5s ease', opacity: it.isDiscussed ? 0.6 : 1 }}
                                 />
-                            )}
-                        </motion.g>
-                    ))}
+                                {/* Shimmer Sparkles */}
+                                {shimmerId === it.id && (
+                                    <g transform="scale(0.8)">
+                                        <motion.circle
+                                            cx={-it.r * 0.4} cy={-it.r * 0.2} r="3" fill="white"
+                                            initial={{ opacity: 0, scale: 0 }}
+                                            animate={{ opacity: [0, 1, 0], scale: [0, 1.2, 0] }}
+                                            transition={{ duration: 1, repeat: 1 }}
+                                        />
+                                        <motion.circle
+                                            cx={it.r * 0.3} cy={it.r * 0.3} r="2" fill="white"
+                                            initial={{ opacity: 0, scale: 0 }}
+                                            animate={{ opacity: [0, 1, 0], scale: [0, 1.5, 0] }}
+                                            transition={{ duration: 1, delay: 0.5, repeat: 1 }}
+                                        />
+                                    </g>
+                                )}
+                                {it.isPearl && (
+                                    <ellipse
+                                        cx={-it.r * 0.3}
+                                        cy={-it.r * 0.3}
+                                        rx={it.r * 0.3}
+                                        ry={it.r * 0.2}
+                                        fill="rgba(255, 255, 255, 0.6)"
+                                    />
+                                )}
+                            </motion.g>
+                        );
+                    })}
                 </g>
             </svg>
 
@@ -389,92 +468,136 @@ const JarPhysics = ({ onSelect, height, blobs, isArchive, isUnsealed, onUnseal, 
     );
 };
 
-// --- Dynamic Date Helpers for MOCK_DATA ---
-const getRelDate = (offsetDays) => {
-    const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    d.setDate(d.getDate() - offsetDays);
-    return d.toISOString();
-};
-
-// --- Mock Data ---
-const MOCK_DATA = {
-    today: {
-        id: 'today',
-        label: 'Today',
-        fullDate: getRelDate(0),
-        emoji: '😇',
-        statusText: '情绪起起伏伏，你始终能把自己接住',
-        whisper: { text: '听起来你现在需要一点点安静的空间...' },
-        blobs: makeBlobs(),
-    },
-    yesterday: {
-        id: 'yesterday',
-        label: 'Yesterday',
-        fullDate: getRelDate(1),
-        emoji: '😌',
-        statusText: '虽然有些波折，但最后还是找到了平静',
-        whisper: { text: '这是你昨天留下的记录' },
-        archiveLabel: {
-            emotions: '#疲惫 #烦躁→平静',
-            events: '加班 | 深夜散步 | 放空'
-        },
-        blobs: [
-            { id: 10, sentimentTag: '沉思紫/灰', label: '疲惫', time: getRelDate(1), note: '洗完澡感觉好多了', source: '手动记录' },
-            { id: 11, sentimentTag: '沉思紫/灰', label: '思考', time: getRelDate(1), note: '关于未来的计划...', source: '对话提取' },
-        ].map(enrichBlob)
-    },
-    day3: {
-        id: 'day3',
-        label: 'day3',
-        fullDate: getRelDate(2),
-        emoji: '😴',
-        statusText: '那天你好像睡了很久...',
-        whisper: { text: '深度睡眠是最好的治愈' },
-        archiveLabel: {
-            emotions: '#焦虑 #挫败 #治愈',
-            events: '任务堆积 | 某件事没说完'
-        },
-        blobs: [] // Empty date
-    },
-    day4: {
-        id: 'day4',
-        label: 'day4',
-        fullDate: getRelDate(3),
-        emoji: '⚡️',
-        statusText: '能量满满的一天，效率很高',
-        whisper: { text: '这是你的高效时刻' },
-        archiveLabel: {
-            emotions: '#兴奋 #成就感 #满足',
-            events: '项目上线 | 团队聚餐 | 好的睡眠'
-        },
-        blobs: [
-            { id: 20, sentimentTag: '能量橙/黄', label: '心流', time: getRelDate(3), note: '专注工作的感觉真好', source: '手动记录' }
-        ].map(enrichBlob)
-    },
-    day5: {
-        id: 'day5',
-        label: 'day5',
-        fullDate: getRelDate(4),
-        emoji: '🧘‍♂️',
-        statusText: '平静如水，适合静坐',
-        whisper: { text: '内心的宁静最仁贵' },
-        archiveLabel: {
-            emotions: '#平静 #专注 #放松',
-            events: '早起冥想 | 整理房间'
-        },
-        blobs: [] // Empty date
-    }
-};
-
+// --- App Component ---
 function App() {
     const [currentPage, setCurrentPage] = useState('home');
     const [selectedBlob, setSelectedBlob] = useState(null);
     const [selectedDate, setSelectedDate] = useState('today');
+    const dateRollerRef = useRef(null); // Ref for auto-scrolling to Today
+
+    // API Data States
+    const [timeline, setTimeline] = useState([]);
+    const [dailyData, setDailyData] = useState(null);
+
     const [onboardingStep, setOnboardingStep] = useState(0); // 0: Welcome, 1: Expression, 2: Done
+    const [isOnboardingSaving, setIsOnboardingSaving] = useState(false);
     const [todayBlobs, setTodayBlobs] = useState([]); // Start with empty for fresh onboarding
     // const [todayBlobs, setTodayBlobs] = useState(makeBlobs()); // 原本的今日案例数据
     const [showTooltip, setShowTooltip] = useState(false); // Post-onboarding guide
+    const [showReportDrawer, setShowReportDrawer] = useState(false);
+
+    // Fetch Timeline on Mount & Persistence Check
+    useEffect(() => {
+        // Register token expiration callback
+        api.setTokenExpiredCallback(() => {
+            setIsLoggedIn(false);
+            setShowLogin(true);
+            setOnboardingStep(0);
+            alert('登录已过期，请重新登录');
+        });
+
+        const token = localStorage.getItem('mochi_token');
+        if (token && token.trim() !== 'demo token' && token.trim() !== 'demo_token') {
+            console.log(`[Session] Active Session found: ${token.substring(0, 8)}...`);
+            setIsLoggedIn(true);
+            setShowLogin(false);
+            // 有有效 token，直接跳过 onboarding 进入首页
+            setOnboardingStep(2);
+        } else {
+            console.log('[Session] No valid session, showing login.');
+            setIsLoggedIn(false);
+            setShowLogin(true);
+            setOnboardingStep(0); // 重置 onboarding 步骤
+            if (token) localStorage.removeItem('mochi_token'); // Clean any garbage
+        }
+    }, []);
+
+    // Auto-scroll to center the active item (Today or selected date)
+    // We use a more robust version that tries again if the first attempt fails
+    useEffect(() => {
+        let attempts = 0;
+        const maxAttempts = 5;
+
+        const scrollToActive = (instant = false) => {
+            if (dateRollerRef.current && timeline.length > 0) {
+                const activeItem = dateRollerRef.current.querySelector('.roller-item.active');
+                if (activeItem) {
+                    activeItem.scrollIntoView({
+                        behavior: instant ? 'auto' : 'smooth',
+                        inline: 'center',
+                        block: 'nearest'
+                    });
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        // First attempt: Instant scroll
+        const success = scrollToActive(true);
+
+        // Subsequent attempts: Smooth correction after layout stabilizes
+        const timer = setInterval(() => {
+            attempts++;
+            const success = scrollToActive(attempts === 1 ? true : false);
+            if (success || attempts >= maxAttempts) {
+                clearInterval(timer);
+            }
+        }, 150);
+
+        return () => clearInterval(timer);
+    }, [timeline, selectedDate, currentPage]);
+
+    // Reset to Today when returning to Home
+    useEffect(() => {
+        if (currentPage === 'home') {
+            setSelectedDate('today');
+        }
+    }, [currentPage]);
+
+    // Mouse Drag-to-Scroll logic for Desktop
+    const isDraggingRef = useRef(false);
+    const startXRef = useRef(0);
+    const scrollLeftRef = useRef(0);
+
+    const handleMouseDown = (e) => {
+        isDraggingRef.current = true;
+        startXRef.current = e.pageX - dateRollerRef.current.offsetLeft;
+        scrollLeftRef.current = dateRollerRef.current.scrollLeft;
+        dateRollerRef.current.style.cursor = 'grabbing';
+    };
+
+    const handleMouseMove = (e) => {
+        if (!isDraggingRef.current) return;
+        e.preventDefault();
+        const x = e.pageX - dateRollerRef.current.offsetLeft;
+        const walk = (x - startXRef.current) * 1.5; // Scroll speed
+        dateRollerRef.current.scrollLeft = scrollLeftRef.current - walk;
+    };
+
+    const handleMouseUp = () => {
+        isDraggingRef.current = false;
+        if (dateRollerRef.current) {
+            dateRollerRef.current.style.cursor = 'grab';
+        }
+    };
+
+    // Fetch Daily Data when selectedDate changes
+    useEffect(() => {
+        api.fetchDailyStatus(selectedDate).then(data => {
+            setDailyData(data);
+        }).catch(console.error);
+    }, [selectedDate]);
+
+    // Sync selectedBlob with todayBlobs for real-time updates (e.g. from optimistic to real)
+    useEffect(() => {
+        if (selectedBlob && !selectedBlob.isPearl) {
+            const latest = todayBlobs.find(b => b.id === selectedBlob.id || (selectedBlob.isOptimistic && b.note === selectedBlob.note));
+            if (latest && (latest.id !== selectedBlob.id || latest.label !== selectedBlob.label)) {
+                setSelectedBlob(latest);
+            }
+        }
+    }, [todayBlobs, selectedBlob]);
 
     // Archive sealed state (Ephemeral: resets when navigating or changing dates)
     const [isUnsealed, setIsUnsealed] = useState(false);
@@ -488,7 +611,28 @@ function App() {
     const [pairingDevice, setPairingDevice] = useState(null); // Current device in setup flow
     const [onboardingInput, setOnboardingInput] = useState(''); // Textarea content for onboarding/manual
     const [entrySource, setEntrySource] = useState('手动记录'); // '手动记录', '对话提取', '录音记录'
-    const [isLoggedIn, setIsLoggedIn] = useState(false);
+    const [isLoggedIn, setIsLoggedIn] = useState(() => {
+        const token = localStorage.getItem('mochi_token');
+        if (!token) return false;
+        // Strict check: if it's the old 'demo token' (with space) or 'demo_token' (with underscore), invalid it
+        if (token.trim() === 'demo token' || token.trim() === 'demo_token') {
+            console.warn('[Session] Detected legacy mock token on init, clearing...');
+            localStorage.removeItem('mochi_token');
+            return false;
+        }
+        return true;
+    });
+
+    // Fetch timeline when logged in
+    useEffect(() => {
+        if (isLoggedIn && timeline.length === 0) {
+            console.log('[App] Logged in detected, fetching timeline...');
+            api.fetchTimeline().then(setTimeline).catch(err => {
+                console.error('[App] Failed to fetch timeline:', err);
+                setTimeline([]);
+            });
+        }
+    }, [isLoggedIn]);
     const [phoneNumber, setPhoneNumber] = useState('');
     const [showLogin, setShowLogin] = useState(true);
     const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
@@ -507,11 +651,16 @@ function App() {
     const animationFrameRef = useRef(null);
     const initialTextRef = useRef(''); // 记录录音开始前的文字
     const longPressTimerRef = useRef(null);
+    const streamRef = useRef(null);
+    const isRecordingRef = useRef(false); // Synchronous tracking for race conditions
+    const isPointerDownRef = useRef(false); // Track if the pointer is actually down on the mic button
 
     // 启动语音监控与识别
     const startVoice = async (context, freshStart = false) => {
-        if (isVoiceActive || recognitionRef.current) return;
+        if (isVoiceActive || recognitionRef.current || isRecordingRef.current) return;
 
+        // Mark intentional start
+        isRecordingRef.current = true;
         setVoiceContext(context);
         setIsVoiceActive(true);
         setIsProcessing(false);
@@ -523,14 +672,35 @@ function App() {
         }
 
         try {
-            // 记录当前输入框的内容，作为“底色”
             if (!freshStart) {
                 initialTextRef.current = context === 'chat' ? chatInput : onboardingInput;
             }
 
+            // Check cancellation before heavy lifting
+            if (!isRecordingRef.current) {
+                console.log('Voice startup cancelled (early)');
+                setIsVoiceActive(false);
+                return;
+            }
+
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
+            // Critical Check: Did user release the button while we were awaiting?
+            if (!isRecordingRef.current) {
+                console.log('Voice cancelled during startup (post-stream)');
+                stream.getTracks().forEach(track => track.stop());
+                setIsVoiceActive(false);
+                return;
+            }
+
+            streamRef.current = stream;
+
             // 1. Audio Visualizer Setup
+            // Close any existing AudioContext before creating a new one
+            if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+                audioContextRef.current.close();
+            }
+
             const audioContext = new (window.AudioContext || window.webkitAudioContext)();
             const analyser = audioContext.createAnalyser();
             const source = audioContext.createMediaStreamSource(stream);
@@ -542,6 +712,7 @@ function App() {
             const bufferLength = analyser.frequencyBinCount;
             const dataArray = new Uint8Array(bufferLength);
             const updateVolume = () => {
+                if (!isRecordingRef.current) return; // Stop loop if cancelled
                 analyser.getByteFrequencyData(dataArray);
                 let sum = 0;
                 for (let i = 0; i < bufferLength; i++) sum += dataArray[i];
@@ -555,7 +726,7 @@ function App() {
             if (SpeechRecognition) {
                 const recognition = new SpeechRecognition();
                 recognition.lang = 'zh-CN';
-                recognition.interimResults = true; // 开启实时转写反馈
+                recognition.interimResults = true;
                 recognition.maxAlternatives = 1;
                 recognition.continuous = true;
 
@@ -564,8 +735,6 @@ function App() {
                     for (let i = 0; i < event.results.length; ++i) {
                         sessionTranscript += event.results[i][0].transcript;
                     }
-
-                    // 组合：录音前的文字 + 本次录音的所有文字 (Cumulative for this session)
                     const updatedText = initialTextRef.current + sessionTranscript;
 
                     if (context === 'chat') {
@@ -573,24 +742,25 @@ function App() {
                     } else if (context === 'onboarding') {
                         setOnboardingInput(updatedText);
                     }
-
-                    // 如果有 final 结果，可以考虑自动停止（可选），但我们现在是长按逻辑，靠 onPointerUp 停止
                 };
 
                 recognition.onerror = (event) => {
                     console.error("Speech recognition error:", event.error);
-                    setIsVoiceActive(false);
+                    stopVoice(); // Safe cleanup
                 };
 
-                recognition.start();
-                recognitionRef.current = recognition;
+                // Final check before starting recognition
+                if (isRecordingRef.current) {
+                    recognition.start();
+                    recognitionRef.current = recognition;
+                }
             } else {
                 console.warn("Speech recognition not supported in this browser.");
             }
         } catch (err) {
             console.error("Microphone access denied:", err);
             setIsVoiceActive(false);
-            alert("请授予麦克风权限以使用语音功能");
+            isRecordingRef.current = false;
         }
     };
 
@@ -598,12 +768,25 @@ function App() {
     const stopVoice = () => {
         setIsVoiceActive(false);
         if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
-        if (audioContextRef.current) audioContextRef.current.close();
+
+        // Close AudioContext only if it's not already closed
+        if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+            audioContextRef.current.close();
+        }
+        audioContextRef.current = null;
+
+        // Stop all tracks in the stream to completely turn off the microphone
+        if (streamRef.current) {
+            streamRef.current.getTracks().forEach(track => track.stop());
+            streamRef.current = null;
+        }
 
         if (recognitionRef.current) {
             recognitionRef.current.stop();
             recognitionRef.current = null;
         }
+
+        isRecordingRef.current = false;
     };
 
     const handleVoiceSuccess = (text) => {
@@ -627,19 +810,50 @@ function App() {
     };
 
     // 长按录音处理器 (Long-press handlers)
-    const micHandlers = (context) => ({
+    const micHandlers = (context, options = {}) => ({
         onPointerDown: (e) => {
             e.preventDefault();
-            startVoice(context);
+            isPointerDownRef.current = true;
+            // Start a timer. If held for 600ms, start recording.
+            longPressTimerRef.current = setTimeout(() => {
+                if (isPointerDownRef.current) {
+                    startVoice(context, options.freshStart || false);
+                    if (navigator.vibrate) navigator.vibrate(50);
+                    longPressTimerRef.current = null; // Mark as fired
+                }
+            }, 600);
         },
         onPointerUp: (e) => {
+            if (!isPointerDownRef.current) return;
             e.preventDefault();
-            stopVoice();
+            isPointerDownRef.current = false;
+
+            // 1. If timer is still valid, it means we released BEFORE 600ms (Short click)
+            if (longPressTimerRef.current) {
+                clearTimeout(longPressTimerRef.current); // Cancel the pending start
+                longPressTimerRef.current = null;
+                console.log('Short press detected, triggering manual entry.');
+                if (options.onStop) options.onStop(); // Trigger entry even on short click
+            }
+            // 2. If timer fired, we already started voice, so now we stop it.
+            else {
+                stopVoice();
+                if (options.onStop) options.onStop();
+            }
         },
         onPointerLeave: (e) => {
-            if (isVoiceActive) stopVoice();
+            if (!isPointerDownRef.current) return; // Only handle leave if button was being pressed
+            isPointerDownRef.current = false;
+
+            if (longPressTimerRef.current) {
+                clearTimeout(longPressTimerRef.current);
+                longPressTimerRef.current = null;
+            } else {
+                stopVoice();
+                if (options.onStop) options.onStop();
+            }
         },
-        onContextMenu: (e) => e.preventDefault(), // 禁用右键菜单防止干扰长按
+        onContextMenu: (e) => e.preventDefault(),
     });
 
     // 颜色配置表 (Emotion Colors) - 合并为 4 大类，绿色融入“治愈/清新”
@@ -666,39 +880,89 @@ function App() {
         'default': ["#F472B6", "#FB7185", "#EC4899", "#FBCFE8"]
     };
 
-    // 获取当前展示的数据 (Merge dynamic state for today)
-    const currentData = {
-        ...MOCK_DATA[selectedDate],
-        blobs: (selectedDate === 'today' ? todayBlobs : MOCK_DATA[selectedDate].blobs).map(b => ({
-            ...b,
-            isDiscussed: discussedIds.has(b.id)
-        }))
-    };
+    // --- Derived State for View ---
+    const isArchive = selectedDate !== 'today';
+    const currentIsToday = selectedDate === 'today';
+
+    const currentData = React.useMemo(() => {
+        // For Today, we merge API blobs with any locally added ones (optimistic).
+        // To prevent "ghost balls" falling from the top, we must ensure each unique event 
+        // only appears once in the list, even if it's currently in both todayBlobs and dailyData.
+        const serverBlobs = dailyData?.blobs || [];
+        const localBlobs = (currentIsToday ? todayBlobs : []).filter(tb => {
+            const tbNote = (tb.note || "").trim();
+            return !serverBlobs.some(sb =>
+                String(sb.id) === String(tb.id) ||
+                (tb.isOptimistic && (sb.note || "").trim() === tbNote)
+            );
+        });
+        const validBlobs = [...serverBlobs, ...localBlobs];
+
+        // Extract display values from dailyData (or use defaults while loading)
+        const {
+            emoji = '🫠',
+            statusText = 'Loading...',
+            whisper = { text: '...' },
+            archiveLabel = null,
+            fullDate = new Date().toISOString(),
+            moodCategory = '平静蓝/绿'
+        } = dailyData || {};
+
+        return {
+            emoji,
+            statusText,
+            whisper,
+            archiveLabel,
+            fullDate,
+            moodCategory,
+            blobs: validBlobs.map(b => ({
+                ...b,
+                isDiscussed: discussedIds.has(b.id)
+            }))
+        };
+    }, [dailyData, todayBlobs, currentIsToday, discussedIds]);
 
     const isHeaderEmpty = selectedDate === 'today' && todayBlobs.length === 0;
     const headerEmoji = isHeaderEmpty ? '\u2728' : currentData.emoji;
     const headerStatusIcon = <Sparkles size={14} />;
-    const headerBg = EMOTION_COLORS[headerEmoji] || EMOTION_COLORS['default'];
 
-    const headerStatusContent = isHeaderEmpty ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-            <span style={{ fontSize: '14px', fontStyle: 'normal', fontWeight: 600, color: '#374151' }}>{"今天还没有记录呢"}</span>
-            <span style={{ fontSize: '12px', color: '#6B7280' }}>{"先把这一刻放进情绪罐头，Mochi 会帮你总结。"}</span>
-            <span style={{ fontSize: '11px', color: '#9CA3AF' }}>{"点击 + 开始记录，也支持语音输入"}</span>
+    // Prioritize Backend Gradient > Emoji Fallback (Direct string mapping)
+    const categoryGradient = HEADER_GRADIENTS[currentData.moodCategory];
+    const emojiGradient = EMOTION_COLORS[headerEmoji] || EMOTION_COLORS['default'];
+
+    const headerBg = categoryGradient || emojiGradient;
+
+    const headerStatusContent = !dailyData ? (
+        // Loading State for Status Text
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', width: '200px' }}>
+            <div className="animate-pulse" style={{ height: '14px', width: '80%', background: 'rgba(0,0,0,0.05)', borderRadius: '4px' }} />
+            <div className="animate-pulse" style={{ height: '12px', width: '60%', background: 'rgba(0,0,0,0.05)', borderRadius: '4px' }} />
         </div>
     ) : (
-        <span style={{ fontSize: '14px', fontStyle: 'normal' }}>{currentData.statusText}</span>
+        isHeaderEmpty ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                <span style={{ fontSize: '14px', fontStyle: 'normal', fontWeight: 600, color: '#374151' }}>{"今天还没有记录呢"}</span>
+                <span style={{ fontSize: '12px', color: '#6B7280' }}>{"点击/长按 + 记录，把这一刻放进情绪罐头"}</span>
+            </div>
+        ) : (
+            <span style={{ fontSize: '14px', fontStyle: 'normal' }}>{currentData.statusText}</span>
+        )
     );
 
-    // 切换日期或数量变化时，重置罐头动画（通过 key）
-    const jarKey = `${selectedDate}-${currentData.blobs.length}`;
+    // 切换日期时重置罐头动画（通过 key）。添加新碎片时不应重置，以便保持物理连续性。
+    const jarKey = selectedDate;
 
     const [chatInput, setChatInput] = useState('');
     const [showEndCard, setShowEndCard] = useState(true); // Simulated: shows based on history
     const [chatSessions, setChatSessions] = useState([]);
+    const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+    const [hasMoreHistory, setHasMoreHistory] = useState(true);
+    const [isTyping, setIsTyping] = useState(false);
+
     const chatEndRef = useRef(null);
     const messagesEndRef = useRef(null);
     const inactivityTimerRef = useRef(null);
+    const shouldAutoScrollRef = useRef(true); // Control auto-scroll behavior
 
     // --- 不活跃检测 (10分钟自动结项) ---
     const resetInactivityTimer = () => {
@@ -724,9 +988,35 @@ function App() {
         };
     }, [chatSessions, currentPage]);
 
+    // Initial History Load
+    useEffect(() => {
+        if (currentPage === 'chat' && chatSessions.length === 0) {
+            const loadInitial = async () => {
+                setIsLoadingHistory(true);
+                try {
+                    const data = await api.fetchChatSessions(10, null);
+                    if (data.sessions && data.sessions.length > 0) {
+                        setChatSessions(data.sessions);
+                    }
+                } catch (e) {
+                    console.error("Failed to load initial history", e);
+                } finally {
+                    setIsLoadingHistory(false);
+                }
+            };
+            loadInitial();
+        }
+    }, [currentPage /* run once when page becomes chat */]);
+
     // Auto-scroll to bottom when chat opens or sessions change
     useEffect(() => {
         if (currentPage === 'chat') {
+            // Skip auto-scroll if we are loading history
+            if (!shouldAutoScrollRef.current) {
+                shouldAutoScrollRef.current = true; // Reset for next time
+                return;
+            }
+
             const scrollToBottom = () => {
                 messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
                 // Fallback: manual scroll on container
@@ -749,6 +1039,51 @@ function App() {
             };
         }
     }, [currentPage, chatSessions]);
+
+    const handleChatScroll = async (e) => {
+        const { scrollTop, scrollHeight } = e.currentTarget;
+
+        // Trigger load when close to top (e.g. < 20px)
+        if (scrollTop < 20 && !isLoadingHistory && hasMoreHistory && chatSessions.length > 0) {
+            console.log('[App] Loading history triggered...');
+            shouldAutoScrollRef.current = false; // Prevent auto-scroll to bottom on render
+            setIsLoadingHistory(true);
+
+            const prevScrollHeight = scrollHeight;
+
+            try {
+                // Find oldest session timestamp for cursor
+                // Current chatSessions: [Oldest, ..., Newest]
+                const oldestSession = chatSessions[0];
+                const beforeTime = oldestSession?.startTime;
+
+                // Fetch older sessions
+                const data = await api.fetchChatSessions(10, beforeTime);
+
+                if (data.sessions && data.sessions.length > 0) {
+                    // Prepend new sessions
+                    setChatSessions(prev => [...data.sessions, ...prev]);
+
+                    // Restore scroll position after render
+                    // We use setTimeout to allow React to commit the update
+                    setTimeout(() => {
+                        if (chatEndRef.current) {
+                            const newScrollHeight = chatEndRef.current.scrollHeight;
+                            const heightDiff = newScrollHeight - prevScrollHeight;
+                            // Adjust scroll top to maintain visual position
+                            chatEndRef.current.scrollTop = heightDiff;
+                        }
+                    }, 0);
+                } else {
+                    setHasMoreHistory(false);
+                }
+            } catch (err) {
+                console.error("Failed to load history", err);
+            } finally {
+                setIsLoadingHistory(false);
+            }
+        }
+    };
 
     const startNewSession = (initialMessages = [], relatedBlobId = null) => {
         const now = new Date();
@@ -806,32 +1141,63 @@ function App() {
         }
     }, [currentPage, chatSessions]);
 
-    const handleSendMessage = () => {
+    const handleSendMessage = async () => {
         if (!chatInput.trim()) return;
 
+        const updatedHistory = chatSessions.length > 0 ? chatSessions[chatSessions.length - 1].messages : [];
         const userMsg = { type: 'user', text: chatInput, timestamp: new Date().toISOString() };
+
+        // 1. Add User Message
         setChatSessions(prev => {
             const lastSession = prev[prev.length - 1];
             const otherSessions = prev.slice(0, -1);
             return [...otherSessions, { ...lastSession, messages: [...lastSession.messages, userMsg] }];
         });
-        setChatInput('');
 
-        // Mock a simple AI response after 1s
-        setTimeout(() => {
-            setChatSessions(prev => {
-                const lastSession = prev[prev.length - 1];
-                if (!lastSession) return prev;
-                const otherSessions = prev.slice(0, -1);
-                return [...otherSessions, {
-                    ...lastSession, messages: [...lastSession.messages, {
-                        type: 'ai',
-                        text: '我在听。感觉这个瞬间对你很重要呢，想再多分享一点吗？',
-                        timestamp: new Date().toISOString()
-                    }]
-                }];
+        const currentInput = chatInput; // Capture current input
+        setChatInput('');
+        setIsTyping(true); // Show typing indicator while connecting
+
+        try {
+            // 2. Prepare for Stream: Create an empty AI message placeholder
+            let isFirstChunk = true;
+
+            await api.streamChat(updatedHistory, currentInput, (chunk) => {
+                setChatSessions(prev => {
+                    const lastSession = prev[prev.length - 1];
+                    if (!lastSession) return prev;
+
+                    const otherSessions = prev.slice(0, -1);
+                    const messages = [...lastSession.messages];
+
+                    if (isFirstChunk) {
+                        setIsTyping(false); // Hide dots once first chunk arrives
+                        // Add new AI message
+                        messages.push({
+                            type: 'ai',
+                            text: chunk,
+                            timestamp: new Date().toISOString()
+                        });
+                        isFirstChunk = false;
+                    } else {
+                        // Append to last AI message
+                        const lastMsg = messages[messages.length - 1];
+                        if (lastMsg.type === 'ai') {
+                            messages[messages.length - 1] = {
+                                ...lastMsg,
+                                text: lastMsg.text + chunk
+                            };
+                        }
+                    }
+
+                    return [...otherSessions, { ...lastSession, messages }];
+                });
             });
-        }, 1000);
+        } catch (err) {
+            console.error('Streaming failed:', err);
+            setIsTyping(false);
+            // Optional: Add error message to chat
+        }
     };
 
 
@@ -889,35 +1255,78 @@ function App() {
         setTodayBlobs([]);
         setOnboardingStep(0);
         setChatSessions([]);
+        // CLEAR STORAGE
+        localStorage.removeItem('mochi_token');
     };
+
+    // Auto-clear 'new' highlight when leaving 'home' and update timestamp
+    useEffect(() => {
+        if (currentPage !== 'home') {
+            setNewBlobIds(new Set()); // Clear all highlights locally
+            api.updateLastHomeVisit(); // Tell backend (mock) we left the feed
+        }
+    }, [currentPage]);
+
+    const [newBlobIds, setNewBlobIds] = useState(new Set()); // Track unread blobs for highlighting (Set of Strings)
+
+    // Sync backend 'isUnread' status to local state
+    // Use a ref to prevent infinite loops and fighting with local deletion
+    const prevUnreadIdsRef = useRef('');
+    useEffect(() => {
+        if (currentData.blobs) {
+            const backendUnread = currentData.blobs.filter(b => b.isUnread).map(b => b.id);
+            const backendUnreadStr = backendUnread.sort().join(',');
+
+            // Only update if the backend list *actually* changes (e.g. new fetch)
+            // This prevents the effect from undoing a local 'delete' when currentData.blobs is just re-created reference
+            if (backendUnreadStr !== prevUnreadIdsRef.current) {
+                if (backendUnread.length > 0) {
+                    setNewBlobIds(prev => {
+                        const next = new Set(prev);
+                        backendUnread.forEach(id => next.add(id));
+                        return next;
+                    });
+                }
+                prevUnreadIdsRef.current = backendUnreadStr;
+            }
+        }
+    }, [currentData.blobs]);
 
     const handleOnboardingComplete = (firstExpression) => {
         if (firstExpression) {
-            // Add new blob to the jar
-            const newBlob = {
-                id: Date.now(),
-                r: 38 + Math.random() * 8,
-                color: '#F472B6', // Pinkish for new manual entry
-                label: '新记录',
-                time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                note: firstExpression,
-                source: entrySource
-            };
-            setTodayBlobs(prev => [...prev, newBlob]);
+            setIsOnboardingSaving(true);
+
+            // 1. Call real API to save
+            api.createEmotionBlob(firstExpression, entrySource)
+                .then(serverBlob => {
+                    if (serverBlob) {
+                        console.log('[API] Saved successfully and categorized.');
+                        setTodayBlobs(prev => [...prev, serverBlob]);
+                        setNewBlobIds(prev => new Set(prev).add(serverBlob.id)); // Add manual one
+                    }
+                    setIsOnboardingSaving(false);
+                    setOnboardingStep(2); // Success -> Step 2
+                    setOnboardingInput('');
+                })
+                .catch(err => {
+                    console.error('[API] Save Failed.', err);
+                    setIsOnboardingSaving(false);
+                    alert("保存失败，请重试");
+                });
 
             // 仅在真实没有碎片（第一个）时弹出恭喜弹窗
-            // 延迟 2 秒，让用户先看到首页和第一个 blob 掉落
+            // 延迟 4 秒，因为现在要等后端返回后球掉落
             if (todayBlobs.length === 0) {
                 setTimeout(() => {
                     setShowTooltip(true);
                     setTimeout(() => setShowTooltip(false), 8000);
-                }, 2000); // 2 秒延迟
+                }, 4000);
             }
+        } else {
+            setOnboardingStep(2);
+            setOnboardingInput('');
         }
-        setOnboardingStep(2); // 完成
-        setOnboardingInput(''); // 清空输入，防止下次打开时残留
         setEntrySource('手动记录'); // 重置为默认
-        // Stay on current page (Home) instead of switching to chat
     };
 
     // 手机号登录页面 (Login View)
@@ -969,13 +1378,19 @@ function App() {
                             className="next-button"
                             onClick={() => {
                                 if (phoneNumber.length >= 11) {
-                                    setIsLoggedIn(true);
-                                    setOnboardingStep(0);
+                                    api.login(phoneNumber).then((result) => {
+                                        setIsLoggedIn(true);
+                                        // 新用户显示 onboarding（0），老用户直接跳过（2）
+                                        setOnboardingStep(result.isNewUser ? 0 : 2);
+                                    }).catch(err => alert('登录失败，请检查连接'));
                                 } else {
                                     alert('请输入有效的手机号');
                                 }
                             }}
-                            style={{ width: '100%', padding: '18px' }}
+                            style={{
+                                width: '100%',
+                                padding: '18px'
+                            }}
                         >
                             开启旅程
                         </button>
@@ -1022,7 +1437,9 @@ function App() {
                             <div className="onboarding-content" style={{ width: '100%' }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                     <h1 className="onboarding-title" style={{ fontSize: '24px', marginBottom: 0 }}>现在的感受...</h1>
-                                    <span onClick={() => { setOnboardingInput(''); setOnboardingStep(2); }} style={{ color: '#9CA3AF', fontSize: '14px', cursor: 'pointer' }}>跳过</span>
+                                    {!isOnboardingSaving && (
+                                        <span onClick={() => { setOnboardingInput(''); setOnboardingStep(2); }} style={{ color: '#9CA3AF', fontSize: '14px', cursor: 'pointer' }}>跳过</span>
+                                    )}
                                 </div>
                                 <div className="expression-input-area">
                                     <div style={{ position: 'relative' }}>
@@ -1030,29 +1447,48 @@ function App() {
                                             className="expression-input"
                                             placeholder="累 / 开心 / 有点乱..."
                                             autoFocus
+                                            disabled={isOnboardingSaving}
                                             value={onboardingInput}
                                             onChange={(e) => setOnboardingInput(e.target.value)}
                                             onKeyDown={(e) => {
-                                                if (e.key === 'Enter' && !e.shiftKey) {
+                                                if (e.key === 'Enter' && !e.shiftKey && !isOnboardingSaving) {
                                                     e.preventDefault();
                                                     handleOnboardingComplete(onboardingInput);
                                                 }
                                             }}
                                         />
-                                        <div
-                                            className={`voice-trigger onboarding ${isVoiceActive && voiceContext === 'onboarding' ? 'recording' : ''}`}
-                                            {...micHandlers('onboarding')}
-                                        >
-                                            <Mic size={20} />
-                                        </div>
-                                        <p className="placeholder-text" style={{ bottom: '-30px', textAlign: 'center' }}>模糊一点也没关系</p>
+                                        {!isOnboardingSaving && (
+                                            <div
+                                                className={`voice-trigger onboarding ${isVoiceActive && voiceContext === 'onboarding' ? 'recording' : ''}`}
+                                                {...micHandlers('onboarding')}
+                                            >
+                                                <Mic size={20} />
+                                            </div>
+                                        )}
+                                        <p className="placeholder-text" style={{ bottom: '-30px', textAlign: 'center' }}>
+                                            {isOnboardingSaving ? "正在分类你的情绪..." : "模糊一点也没关系"}
+                                        </p>
                                     </div>
                                     <button
                                         className="next-button"
-                                        style={{ width: '100%', marginTop: '60px' }}
+                                        style={{
+                                            width: '100%',
+                                            marginTop: '60px',
+                                            background: 'var(--primary)',
+                                            opacity: isOnboardingSaving ? 0.7 : 1,
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            gap: '8px',
+                                            transition: 'opacity 0.3s ease-in-out'
+                                        }}
+                                        disabled={isOnboardingSaving}
                                         onClick={() => handleOnboardingComplete(onboardingInput)}
                                     >
-                                        放入情绪罐头
+                                        {isOnboardingSaving && (
+                                            <div className="animate-spin" style={{ width: '16px', height: '16px', border: '2px solid currentColor', borderTopColor: 'transparent', borderRadius: '50%', flexShrink: 0 }} />
+                                        )}
+                                        {isOnboardingSaving ? "处理中..." : "放入情绪罐头"}
                                     </button>
                                 </div>
                             </div>
@@ -1095,7 +1531,13 @@ function App() {
                                         <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#111827' }}>{formatToDate(currentData.fullDate)}</h1>
                                         <p style={{ fontSize: '13px', color: '#6B7280', marginTop: '2px' }}>{formatToWeekday(currentData.fullDate)}</p>
                                     </div>
-                                    <div style={{ fontSize: '28px' }}>{headerEmoji}</div>
+                                    <div style={{ fontSize: '28px' }}>
+                                        {!dailyData ? (
+                                            <div className="animate-pulse" style={{ width: '32px', height: '32px', background: 'rgba(0,0,0,0.1)', borderRadius: '50%' }} />
+                                        ) : (
+                                            headerEmoji
+                                        )}
+                                    </div>
                                 </div>
                                 <div className="status-card" style={{ marginTop: 0 }}>
                                     <div className="mochi-whisper" style={{ marginTop: 0 }}>
@@ -1106,37 +1548,108 @@ function App() {
                             </div>
 
                             {/* Time Roller - 动态映射且支持横向滚动 */}
-                            <div className="date-roller">
-                                {Object.keys(MOCK_DATA).reverse().map((key) => {
-                                    const data = MOCK_DATA[key];
-                                    const hasData = key === 'today' || data.blobs.length > 0;
-                                    const isActive = selectedDate === key;
+                            <div
+                                className="date-roller"
+                                ref={dateRollerRef}
+                                onMouseDown={handleMouseDown}
+                                onMouseMove={handleMouseMove}
+                                onMouseUp={handleMouseUp}
+                                onMouseLeave={handleMouseUp}
+                                style={{ cursor: timeline.length === 0 ? 'default' : 'grab' }}
+                            >
+                                {timeline.length === 0 ? (
+                                    <>
+                                        <div className="roller-spacer" />
+                                        {[...Array(5)].map((_, i) => (
+                                            <div key={i} style={{
+                                                width: '60px',
+                                                height: '24px',
+                                                background: 'rgba(0,0,0,0.05)',
+                                                borderRadius: '6px',
+                                                flexShrink: 0
+                                            }} className="animate-pulse" />
+                                        ))}
+                                        <div className="roller-spacer" />
+                                    </>
+                                ) : (
+                                    <>
+                                        <div className="roller-spacer" />
+                                        {timeline.map((item) => {
+                                            const isActive = selectedDate === item.id;
 
-                                    return (
-                                        <div
-                                            key={key}
-                                            className={`roller-item ${isActive ? 'active' : ''} ${!hasData ? 'disabled' : 'has-data'}`}
-                                            onClick={() => hasData && setSelectedDate(key)}
-                                        >
-                                            {getTimeLabel(data.fullDate)}
-                                            {isActive && <div className="active-dot" />}
-                                        </div>
-                                    );
-                                })}
+                                            return (
+                                                <div
+                                                    key={item.id}
+                                                    className={`roller-item ${isActive ? 'active' : ''} ${!item.hasData ? 'disabled' : 'has-data'}`}
+                                                    onClick={() => item.hasData && setSelectedDate(item.id)}
+                                                >
+                                                    {item.id === 'today' ? 'Today' : getTimeLabel(item.fullDate)}
+                                                    {isActive && <div className="active-dot" />}
+                                                </div>
+                                            );
+                                        })}
+                                    </>
+                                )}
                             </div>
 
                             <div className="jar-container">
-                                <JarPhysics
-                                    key={jarKey}
-                                    height={360}
-                                    onSelect={setSelectedBlob}
-                                    blobs={currentData.blobs}
-                                    isArchive={selectedDate !== 'today'}
-                                    isUnsealed={isUnsealed}
-                                    onUnseal={() => setIsUnsealed(true)}
-                                    archiveData={currentData}
-                                />
+                                {!dailyData ? (
+                                    <div style={{
+                                        height: 360,
+                                        width: JAR_WIDTH,
+                                        margin: '0 auto',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        opacity: 0.5
+                                    }}>
+                                        <div className="animate-spin" style={{ width: '32px', height: '32px', border: '3px solid #E5E7EB', borderTopColor: '#A78BFA', borderRadius: '50%' }} />
+                                    </div>
+                                ) : (
+                                    <JarPhysics
+                                        key={jarKey}
+                                        height={360}
+                                        onSelect={(blob) => {
+                                            setSelectedBlob(blob);
+                                            // Clear highlight if viewing a new blob
+                                            if (newBlobIds.has(blob.id)) {
+                                                setNewBlobIds(prev => {
+                                                    const next = new Set(prev);
+                                                    next.delete(blob.id);
+                                                    return next;
+                                                });
+                                            }
+                                        }}
+                                        blobs={currentData.blobs}
+                                        newBlobIds={newBlobIds}
+                                        isArchive={selectedDate !== 'today'}
+                                        isUnsealed={isUnsealed}
+                                        onUnseal={() => setIsUnsealed(true)}
+                                        archiveData={currentData}
+                                    />
+                                )}
                             </div>
+
+                            {/* Self-Discovery Entry Bar */}
+                            <motion.div
+                                className="discovery-bar-container"
+                                initial={{ opacity: 0, y: 10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ delay: 0.5 }}
+                            >
+                                <button className="discovery-bar" onClick={() => setShowReportDrawer(true)}>
+                                    <div className="discovery-bar-content">
+                                        <div className="discovery-icon-bg">
+                                            <PieChart size={14} color="#A78BFA" />
+                                        </div>
+                                        <div className="discovery-text">
+                                            <span className="title">我的情绪总结</span>
+                                            <span className="subtitle">当你留下很多碎片后，一些规律，会慢慢浮现。</span>
+                                        </div>
+                                    </div>
+                                    <ChevronRight size={16} color="#D1D5DB" />
+                                </button>
+                            </motion.div>
 
                             <div style={{ position: 'absolute', bottom: '84px', right: '16px', zIndex: 100 }}>
                                 {/* Manual Entry - Long-press to record directly */}
@@ -1144,32 +1657,7 @@ function App() {
                                     className={`home-fab ${isVoiceActive && voiceContext === 'onboarding' ? 'recording' : ''}`}
                                     whileHover={selectedDate === 'today' ? { scale: 1.05 } : {}}
                                     whileTap={selectedDate === 'today' ? { scale: 0.95 } : {}}
-                                    {...(selectedDate === 'today' ? micHandlers('onboarding') : {})}
-                                    onPointerDown={(e) => {
-                                        if (selectedDate !== 'today') return;
-                                        e.preventDefault();
-                                        // Start fresh voice session
-                                        setEntrySource('手动记录');
-                                        startVoice('onboarding', true);
-                                        longPressTimerRef.current = setTimeout(() => {
-                                            // Just to mark it as a long press internally if needed
-                                        }, 400);
-                                    }}
-                                    onPointerUp={(e) => {
-                                        if (selectedDate !== 'today') return;
-                                        e.preventDefault();
-                                        const duration = Date.now() - (e.timeStamp || Date.now()); // Simple check
-
-                                        stopVoice();
-                                        if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
-
-                                        // Go to entry screen
-                                        setOnboardingStep(1);
-                                    }}
-                                    onPointerLeave={() => {
-                                        if (isVoiceActive) stopVoice();
-                                        if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
-                                    }}
+                                    {...(selectedDate === 'today' ? micHandlers('onboarding', { freshStart: true, onStop: () => setOnboardingStep(1) }) : {})}
                                     style={{
                                         background: isVoiceActive && voiceContext === 'onboarding'
                                             ? 'linear-gradient(135deg, #A78BFA, #818CF8)'
@@ -1247,84 +1735,74 @@ function App() {
 
                             <div
                                 ref={chatEndRef}
+                                onScroll={handleChatScroll}
                                 style={{ padding: '24px 24px 24px 24px', paddingTop: '60px', display: 'flex', flexDirection: 'column', overflowY: 'auto', flex: 1, zIndex: 1 }}
                             >
+                                {isLoadingHistory && (
+                                    <div style={{ textAlign: 'center', padding: '10px', color: '#9CA3AF', fontSize: '12px' }}>
+                                        Looking for memories...
+                                    </div>
+                                )}
 
-                                {/* 模拟更早的历史记录 (Faded) - 12/1 */}
-                                <div style={{ opacity: 0.5 }}>
-                                    <div style={{ textAlign: 'center', margin: '20px 0', opacity: 0.6 }}>
-                                        <p style={{ fontSize: '12px', color: '#9CA3AF' }}>2025/12/1 · 8:40 PM</p>
-                                    </div>
-                                    <div className="chat-bubble user" style={{ filter: 'grayscale(0.3)' }}>
-                                        今天好累啊...
-                                    </div>
-                                    <div className="chat-bubble ai" style={{ filter: 'grayscale(0.3)' }}>
-                                        抱抱你。发生什么事了吗？
-                                    </div>
-                                    <div className="chat-bubble user" style={{ filter: 'grayscale(0.3)' }}>
-                                        没事，就是工作有点多。
-                                    </div>
-                                </div>
 
-                                {/* 今日上午对话 - 12/2 8:40 AM */}
-                                <div style={{ marginTop: '30px' }}>
-                                    <div style={{ textAlign: 'center', margin: '20px 0', opacity: 0.8 }}>
-                                        <p style={{ fontSize: '12px', color: '#9CA3AF', fontWeight: 500 }}>2025/12/2 · 8:40 AM</p>
-                                    </div>
-                                    <div className="chat-bubble ai">
-                                        早安！昨晚睡得怎么样？
-                                    </div>
-                                    <div className="chat-bubble user">
-                                        还行，就是有点不想起床去上班。
-                                    </div>
-                                    <div className="chat-bubble ai">
-                                        理解的，周一总是需要一点额外的动力。新的一周，慢慢来就好。
-                                    </div>
-                                </div>
-
-                                {/* 第一段 Session 的 End Card */}
-                                <div className="saved-indicator" style={{ marginBottom: '0', marginTop: '20px' }}>
-                                    <div className="dot" />
-                                    <span>已封存于 9:30 AM</span>
-                                </div>
-
-                                <div className="session-end-card" style={{ flexShrink: 0, marginBottom: '40px' }}>
-                                    <div className="end-card-shine" />
-                                    <p style={{ fontSize: '15px', color: '#4B5563', lineHeight: '1.6', marginBottom: '0' }}>
-                                        这周的能量稍微低一点也没关系。<br />记得多喝点温水，下午见。
-                                    </p>
-                                </div>
 
                                 {/* Dynamic Sessions */}
-                                {chatSessions.map((session) => (
-                                    <div key={session.id} style={{ marginBottom: '30px' }}>
-                                        <div style={{ textAlign: 'center', margin: '20px 0', opacity: 0.8 }}>
-                                            <p style={{ fontSize: '12px', color: '#9CA3AF', fontWeight: 500 }}>{formatToSessionTime(session.startTime)}</p>
+                                {chatSessions.map((session) => {
+                                    // Determine if session is "historical" (not today)
+                                    // Use closedAt if available, otherwise startTime
+                                    const sessionTime = session.closedAt || session.startTime;
+                                    const isHistory = !isDateToday(sessionTime);
+
+                                    return (
+                                        <div
+                                            key={session.id}
+                                            style={{
+                                                marginBottom: '30px',
+                                                opacity: isHistory ? 0.6 : 1,
+                                                // filter: isHistory ? 'grayscale(0.8)' : 'none', // User requested only opacity
+                                                transition: 'all 0.3s ease'
+                                            }}
+                                        >
+                                            <div style={{ textAlign: 'center', margin: '20px 0', opacity: 0.8 }}>
+                                                <p style={{ fontSize: '12px', color: '#9CA3AF', fontWeight: 500 }}>{formatToSessionTime(session.startTime)}</p>
+                                            </div>
+                                            {session.messages.map((msg, i) => (
+                                                <div key={i} className={`chat-bubble ${msg.type}`}>
+                                                    {msg.text}
+                                                    <span style={{ fontSize: '10px', opacity: 0.6, display: 'block', marginTop: '4px', textAlign: msg.type === 'user' ? 'right' : 'left' }}>
+                                                        {formatToHHmm(msg.timestamp)}
+                                                    </span>
+                                                </div>
+                                            ))}
+                                            {session.isClosed && (
+                                                <div>
+                                                    <div className="saved-indicator" style={{ marginBottom: '0', marginTop: '16px' }}>
+                                                        <div className="dot" />
+                                                        <span>{`\u5df2\u5c01\u5b58\u4e8e ${formatToSessionTime(session.closedAt)}`}</span>
+                                                    </div>
+                                                    <div className="session-end-card" style={{ flexShrink: 0, marginTop: '12px' }}>
+                                                        <div className="end-card-shine" />
+                                                        <p style={{ fontSize: '14px', color: '#4B5563', lineHeight: '1.6', marginBottom: '0' }}>
+                                                            {session.endCardContent}
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                            )}
                                         </div>
-                                        {session.messages.map((msg, i) => (
-                                            <div key={i} className={`chat-bubble ${msg.type}`}>
-                                                {msg.text}
-                                                <span style={{ fontSize: '10px', opacity: 0.6, display: 'block', marginTop: '4px', textAlign: msg.type === 'user' ? 'right' : 'left' }}>
-                                                    {formatToHHmm(msg.timestamp)}
-                                                </span>
-                                            </div>
-                                        ))}
-                                        {session.isClosed && (
-                                            <div>
-                                                <div className="saved-indicator" style={{ marginBottom: '0', marginTop: '16px' }}>
-                                                    <div className="dot" />
-                                                    <span>{`\u5df2\u5c01\u5b58\u4e8e ${formatToSessionTime(session.closedAt)}`}</span>
-                                                </div>
-                                                <div className="session-end-card" style={{ flexShrink: 0, marginTop: '12px' }}>
-                                                    <div className="end-card-shine" />
-                                                    <p style={{ fontSize: '14px', color: '#4B5563', lineHeight: '1.6', marginBottom: '0' }}>
-                                                        {session.endCardContent}
-                                                    </p>
-                                                </div>
-                                            </div>
-                                        )}
+                                    );
+                                })}
+
+
+
+                                {isTyping && (
+                                    <div key="typing" style={{ marginBottom: '30px' }}>
+                                        <div className="chat-bubble ai" style={{ width: '60px', borderRadius: '24px 24px 24px 4px', padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+                                            <div className="animate-bounce" style={{ width: '6px', height: '6px', background: '#9CA3AF', borderRadius: '50%', animationDelay: '0s' }} />
+                                            <div className="animate-bounce" style={{ width: '6px', height: '6px', background: '#9CA3AF', borderRadius: '50%', animationDelay: '0.1s' }} />
+                                            <div className="animate-bounce" style={{ width: '6px', height: '6px', background: '#9CA3AF', borderRadius: '50%', animationDelay: '0.2s' }} />
+                                        </div>
                                     </div>
-                                ))}
+                                )}
 
                                 {/* Dummy element to anchor scroll to bottom */}
                                 <div ref={messagesEndRef} style={{ height: '1px' }} />
@@ -1431,7 +1909,12 @@ function App() {
 
                             <div
                                 className="device-card add-device"
-                                onClick={() => setIsScanning(true)}
+                                onClick={() => {
+                                    api.login(phoneNumber).then(res => {
+                                        setIsLoggedIn(true);
+                                        setShowLogin(false);
+                                    });
+                                }}
                                 style={{
                                     border: '2px dashed rgba(167, 139, 250, 0.3)',
                                     background: 'rgba(167, 139, 250, 0.03)',
@@ -1535,7 +2018,7 @@ function App() {
                                             <h3 style={{ fontSize: '18px', fontWeight: 600 }}>{selectedBlob.label}</h3>
                                             <div style={{ background: '#f3f4f6', padding: '4px 8px', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '4px' }}>
                                                 {selectedBlob.id % 2 === 0 ? <MessageCircle size={12} /> : <Radio size={12} />}
-                                                <span style={{ fontSize: '10px', color: '#6B7280' }}>来自设备</span>
+                                                <span style={{ fontSize: '10px', color: '#6B7280' }}>{selectedBlob.source || '来自设备'}</span>
                                             </div>
                                         </div>
                                         <X size={20} color="#9CA3AF" onClick={() => setSelectedBlob(null)} style={{ cursor: 'pointer' }} />
@@ -1908,8 +2391,162 @@ function App() {
                         />
                     </motion.div>
                 )}
+
+                {/* Report Drawer - Bottom up tray */}
+                {showReportDrawer && (
+                    <div key="report-drawer-overlay" className="modal-overlay report-overlay" onClick={() => setShowReportDrawer(false)} style={{ zIndex: 4000 }}>
+                        <motion.div
+                            className="report-drawer"
+                            initial={{ y: '100%' }}
+                            animate={{ y: 0 }}
+                            exit={{ y: '100%' }}
+                            transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            <div className="drawer-handle" />
+                            <div className="report-header">
+                                <button className="close-drawer-btn" onClick={() => setShowReportDrawer(false)}>
+                                    <X size={20} color="#9CA3AF" />
+                                </button>
+                                <h2 className="report-title">我的情绪总结</h2>
+                                <p className="report-subtitle">当你留下很多碎片后，一些规律，会慢慢浮现。</p>
+                            </div>
+
+                            <div className="report-body" style={{ position: 'relative' }}>
+                                <div className="report-watermark-layer">
+                                    {[...Array(40)].map((_, i) => (
+                                        <div key={i} className="report-watermark">示意图</div>
+                                    ))}
+                                </div>
+                                {/* Section 1: Reaction Persona */}
+                                <div className="report-section">
+                                    <div className="section-label">反应方式画像</div>
+                                    <div className="persona-card">
+                                        <img
+                                            src="/persona_illustration.png"
+                                            alt="Persona Illustration"
+                                            className="persona-illustration"
+                                        />
+                                        <div className="persona-badge">
+                                            <Sparkles size={16} />
+                                            <span>内耗型</span>
+                                        </div>
+                                        <div className="persona-desc">
+                                            <p>情绪来时，我更容易：</p>
+                                            <div className="persona-tags">
+                                                <span className="p-tag active">反复想</span>
+                                                <span className="p-tag">逃开</span>
+                                                <span className="p-tag active">自己消化</span>
+                                                <span className="p-tag">找人说</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Section 2: Rhythm & Triggers */}
+                                <div className="report-section">
+                                    <div className="section-label">情绪节奏 × 触发源</div>
+                                    <div className="rhythm-card larger">
+                                        <div className="rhythm-graph-container">
+                                            <div className="sentiment-labels">
+                                                <span>开心</span>
+                                                <span>平静</span>
+                                                <span>低落</span>
+                                            </div>
+                                            <div className="rhythm-graph-mock">
+                                                <svg viewBox="0 0 200 100" className="rhythm-svg">
+                                                    {/* Baseline */}
+                                                    <line x1="0" y1="50" x2="200" y2="50" stroke="#F3F4F6" strokeDasharray="4 2" />
+
+                                                    {/* Sentiment Path */}
+                                                    <path
+                                                        d="M0,55 C15,55 25,10 45,15 C65,20 75,90 100,80 C125,70 135,20 160,25 C185,30 190,65 200,60"
+                                                        fill="none"
+                                                        stroke="url(#sentiment-grad)"
+                                                        strokeWidth="4"
+                                                        strokeLinecap="round"
+                                                    />
+
+                                                    <defs>
+                                                        <linearGradient id="sentiment-grad" x1="0" y1="0" x2="0" y2="1">
+                                                            <stop offset="0%" stopColor="#FCA5A5" />
+                                                            <stop offset="50%" stopColor="#A78BFA" />
+                                                            <stop offset="100%" stopColor="#93C5FD" />
+                                                        </linearGradient>
+                                                    </defs>
+
+                                                    {/* Data Points */}
+                                                    <circle cx="45" cy="15" r="3.5" fill="#FCA5A5" />
+                                                    <circle cx="100" cy="80" r="3.5" fill="#93C5FD" />
+                                                    <circle cx="160" cy="25" r="3.5" fill="#FCA5A5" />
+                                                </svg>
+                                                <div className="rhythm-days">
+                                                    <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="trigger-insight">
+                                            本周你的情绪波动由于 <span className="highlight">#社交互动</span> 显著提升，但在 <span className="highlight">#周四深夜</span> 出现了短暂的低落期。
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Section 3: Relationships & Care */}
+                                <div className="report-section">
+                                    <div className="section-label">关系与在意的人</div>
+                                    <div className="relations-cloud-card">
+                                        <div className="cloud-container">
+                                            <div className="cloud-center">
+                                                <div className="main-name">老妈</div>
+                                            </div>
+                                            <div className="cloud-tags">
+                                                <span className="c-tag t1">关心</span>
+                                                <span className="c-tag t2">琐事</span>
+                                                <span className="c-tag t3">压力感</span>
+                                                <span className="c-tag t4">唠叨</span>
+                                                <span className="c-tag t5">温暖</span>
+                                            </div>
+                                        </div>
+                                        <div className="relation-note">你把近 40% 的情绪，都花在了这些关系里。</div>
+                                    </div>
+                                </div>
+
+                                {/* Section 4: Recovery Factors */}
+                                <div className="report-section">
+                                    <div className="section-label">反应方式 × 恢复因子</div>
+                                    <div className="recovery-card">
+                                        <div className="recovery-title">当我难受时，什么能让我好受些：</div>
+                                        <div className="recovery-list">
+                                            <div className="rec-item">
+                                                <div className="rec-icon">📖</div>
+                                                <div className="rec-text">独自去书店</div>
+                                            </div>
+                                            <div className="rec-item">
+                                                <div className="rec-icon">🧘</div>
+                                                <div className="rec-text">深度呼吸 5 分钟</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="report-footer-actions" style={{ marginTop: '12px' }}>
+                                    <button className="action-btn primary" onClick={() => setShowReportDrawer(false)}>
+                                        我知道了
+                                    </button>
+                                    <button className="action-btn secondary" onClick={() => {
+                                        setShowReportDrawer(false);
+                                        setCurrentPage('chat');
+                                        startNewSession([{ type: 'user', text: '想听听你对我的近期总结' }]);
+                                    }}>
+                                        和 Mochi 聊聊总结
+                                    </button>
+                                </div>
+                            </div>
+                        </motion.div>
+                    </div>
+                )}
             </AnimatePresence>
-        </div>
+        </div >
     )
 }
 

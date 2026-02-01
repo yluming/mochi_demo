@@ -37,6 +37,9 @@ Thumbs.db
 # Vite
 *.local
 
+# Data generation
+gen_data/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

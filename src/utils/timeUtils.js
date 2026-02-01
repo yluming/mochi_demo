@@ -10,6 +10,7 @@ export const formatToHHmm = (isoString) => {
     if (!isoString) return '';
     try {
         const date = new Date(isoString);
+        if (isNaN(date.getTime())) return '';
         return date.toLocaleTimeString('zh-CN', {
             hour: '2-digit',
             minute: '2-digit',
@@ -27,6 +28,7 @@ export const formatToDate = (isoString) => {
     if (!isoString) return '';
     try {
         const date = new Date(isoString);
+        if (isNaN(date.getTime())) return '';
         return date.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' });
     } catch (e) {
         return '';
@@ -40,6 +42,7 @@ export const formatToWeekday = (isoString) => {
     if (!isoString) return '';
     try {
         const date = new Date(isoString);
+        if (isNaN(date.getTime())) return '';
         return date.toLocaleDateString('zh-CN', { weekday: 'long' });
     } catch (e) {
         return '';
@@ -53,6 +56,7 @@ export const formatToSessionTime = (isoString) => {
     if (!isoString) return '';
     try {
         const date = new Date(isoString);
+        if (isNaN(date.getTime())) return '';
         const datePart = date.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/-/g, '/');
         const timePart = date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
         return `${datePart} · ${timePart}`;
@@ -68,11 +72,12 @@ export const getTimeLabel = (isoString) => {
     if (!isoString) return '';
     try {
         const date = new Date(isoString);
+        if (isNaN(date.getTime())) return '';
         const now = new Date();
 
-        // Remove time for comparison
-        const dDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-        const dNow = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        // IMPORTANT: Use UTC dates for comparison since isoString is in UTC
+        const dDate = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+        const dNow = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
 
         const diffDays = Math.round((dNow - dDate) / (1000 * 60 * 60 * 24));
 
@@ -80,10 +85,29 @@ export const getTimeLabel = (isoString) => {
         if (diffDays === 1) return 'Yesterday';
 
         // Return short format: Mon 3, Tue 4, etc.
-        const weekdayShort = date.toLocaleDateString('en-US', { weekday: 'short' });
-        const day = date.getDate();
+        // Use UTC methods to get the correct weekday and day
+        const weekdayShort = date.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' });
+        const day = date.getUTCDate();
         return `${weekdayShort} ${day}`;
     } catch (e) {
         return '';
+    }
+};
+
+/**
+ * Checks if a given RFC3339 string represents Today (Local Time)
+ */
+export const isDateToday = (isoString) => {
+    if (!isoString) return false;
+    try {
+        const date = new Date(isoString);
+        if (isNaN(date.getTime())) return false;
+
+        const now = new Date();
+        return date.getDate() === now.getDate() &&
+            date.getMonth() === now.getMonth() &&
+            date.getFullYear() === now.getFullYear();
+    } catch (e) {
+        return false;
     }
 };
