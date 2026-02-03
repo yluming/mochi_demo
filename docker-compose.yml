@@ -1,0 +1,11 @@
+version: '3.8'
+
+services:
+  mochi-frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mochi-frontend
+    ports:
+      - "8080:80" # Maps localhost:8080 -> container:80
+    restart: always

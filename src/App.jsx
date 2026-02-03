@@ -433,16 +433,18 @@ const JarPhysics = ({ onSelect, height, blobs, newBlobIds, isArchive, isUnsealed
                                     scaleX: it.sx,
                                     scaleY: it.sy,
                                     cursor: it.isPearl ? 'default' : 'pointer',
-                                    opacity: it.active ? 1 : 0 // Hide until active to prevent "stuck at mouth" visual bug
+                                    // Opacity handled by animate prop now
                                 }}
-                                animate={
-                                    isUnsealed ? { scale: [1, 1.15, 1] } :
-                                        (isNewest ? { scale: [1, 1.08, 1] } : {})
-                                }
-                                transition={
-                                    isUnsealed ? { duration: 0.5, ease: "backOut" } :
+                                initial={{ opacity: isArchive ? 1 : 0 }}
+                                animate={{
+                                    opacity: it.active ? 1 : 0,
+                                    scale: isUnsealed ? [1, 1.15, 1] : (isNewest && it.active ? [1, 1.08, 1] : 1)
+                                }}
+                                transition={{
+                                    opacity: { duration: 0.4 }, // Smooth fade-in when activated
+                                    scale: isUnsealed ? { duration: 0.5, ease: "backOut" } :
                                         (isNewest ? { duration: 2, repeat: Infinity, ease: "easeInOut" } : {})
-                                }
+                                }}
                                 onClick={() => !it.isPearl && onSelect(it)}
                             >
                                 {/* Ripple Effect for Newest Blob */}
@@ -581,6 +583,9 @@ function App() {
         return [];
     });
 
+    // Track if we are currently fetching an AI evaluation
+    const [isEvaluating, setIsEvaluating] = useState(false);
+
     // Persist todayBlobs to local storage
     useEffect(() => {
         const todayStr = new Date().toLocaleDateString();
@@ -716,19 +721,26 @@ function App() {
             const hasBlobs = data.blobs && data.blobs.length > 0;
 
             // 2. Conditional & Decoupled Eval Fetch
-            // Today empty state: skip eval per user request. 
-            // History: user says they will directly request header, and fetchDailyStatus already includes it if pre-generated.
-            // If they want a FRESH eval for today with blobs, we call it here.
-            if (isToday && hasBlobs) {
-                api.fetchDailyEval().then(evalData => {
-                    if (isCancelled || !evalData) return;
+            // We fetch eval for ANY day that has blobs, ensuring history also shows correct summaries.
+            if (hasBlobs) {
+                setIsEvaluating(true); // Show loading skeleton for text
+                api.fetchDailyEval(selectedDate).then(evalData => {
+                    if (isCancelled) return;
+                    if (!evalData) {
+                        setIsEvaluating(false);
+                        return;
+                    }
                     setDailyData(prev => prev ? ({
                         ...prev,
                         moodCategory: evalData.mood_category || prev.moodCategory,
                         emoji: evalData.emoji || prev.emoji,
                         statusText: evalData.status_text || prev.statusText
                     }) : prev);
-                }).catch(err => console.warn('[App] Eval fetch failed:', err));
+                    setIsEvaluating(false);
+                }).catch(err => {
+                    console.warn('[App] Eval fetch failed:', err);
+                    setIsEvaluating(false);
+                });
             }
         }).catch(err => {
             if (!isCancelled) {
@@ -1077,7 +1089,9 @@ function App() {
         };
     }, [dailyData, todayBlobs, currentIsToday, discussedIds]);
 
-    const isHeaderEmpty = selectedDate === 'today' && todayBlobs.length === 0;
+    // Fix: Check the computed blobs (currentData.blobs) instead of just local todayBlobs
+    // This ensures that if we have server data for today, we don't show the empty slate.
+    const isHeaderEmpty = selectedDate === 'today' && currentData.blobs.length === 0;
     const headerEmoji = isHeaderEmpty ? '\u2728' : currentData.emoji;
     const headerStatusIcon = <Sparkles size={14} />;
 
@@ -1087,7 +1101,10 @@ function App() {
 
     const headerBg = categoryGradient || emojiGradient;
 
-    const headerStatusContent = !dailyData ? (
+    // Show skeleton if data is missing OR if we are actively evaluating the day's content
+    const showHeaderSkeleton = !dailyData || isEvaluating;
+
+    const headerStatusContent = showHeaderSkeleton ? (
         // Loading State for Status Text
         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', width: '200px' }}>
             <div className="animate-pulse" style={{ height: '14px', width: '80%', background: 'rgba(0,0,0,0.05)', borderRadius: '4px' }} />
@@ -1778,7 +1795,7 @@ function App() {
                                         <p style={{ fontSize: '13px', color: '#6B7280', marginTop: '2px' }}>{formatToWeekday(currentData.fullDate)}</p>
                                     </div>
                                     <div style={{ fontSize: '28px' }}>
-                                        {!dailyData ? (
+                                        {showHeaderSkeleton ? (
                                             <div className="animate-pulse" style={{ width: '32px', height: '32px', background: 'rgba(0,0,0,0.1)', borderRadius: '50%' }} />
                                         ) : (
                                             headerEmoji

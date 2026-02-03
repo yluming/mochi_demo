@@ -406,9 +406,10 @@ const generateSmartUI = (blobs, isToday) => {
 
 /**
  * Fetches daily evaluation from backend (AI summary)
- * GET /emotion-blobs/eval
+ * GET /emotion-blobs/eval?date={date}
+ * @param {string} dateId - The ID of the date (e.g., 'today', 'yesterday')
  */
-export const fetchDailyEval = async () => {
+export const fetchDailyEval = async (dateId = 'today') => {
     if (USE_MOCK) {
         return {
             mood_category: "治愈/清新",
@@ -418,7 +419,27 @@ export const fetchDailyEval = async () => {
     }
 
     try {
-        const response = await fetch(`${API_BASE_URL}/emotion-blobs/eval`, {
+        // Resolve dateId to fullDate string using timeline logic
+        // We reuse the logic from fetchDailyStatus (or separate it if needed)
+        // For simplicity/robustness, we re-fetch timeline or use a helper if available.
+        // But to avoid circular dep or extra calls, let's assume dateId IS the date string if it looks like one,
+        // or resolve 'today'/'yesterday'.
+
+        // BETTER APPROACH: Just like fetchDailyStatus, we can fetch timeline to be safe for 'today' mapping.
+        const timeline = await fetchTimeline();
+        const timelineItem = timeline.find(item => item.id === dateId);
+
+        let dateParam = dateId;
+        if (timelineItem) {
+            dateParam = timelineItem.fullDate;
+        } else if (dateId === 'today') {
+            dateParam = new Date().toISOString(); // Fallback
+        }
+
+        console.log(`[API] Fetching eval for ${dateId} -> ${dateParam}`);
+
+        const params = new URLSearchParams({ date: dateParam });
+        const response = await fetch(`${API_BASE_URL}/emotion-blobs/eval?${params}`, {
             headers: getHeaders()
         });
 
@@ -475,7 +496,19 @@ export const fetchDailyStatus = async (dateId) => {
         throw new Error('Failed to fetch daily status');
     }
     const result = await blobsResponse.json();
-    const rawBlobs = result.data?.blobs || (Array.isArray(result.data) ? result.data : []);
+
+    // Handle various response structures:
+    // 1. { data: { blobs: [...] } } - Standard wrapper
+    // 2. { data: [...] } - Wrapper with direct array
+    // 3. [...] - Direct array (as seen in screenshot)
+    let rawBlobs = [];
+    if (Array.isArray(result)) {
+        rawBlobs = result;
+    } else if (Array.isArray(result.data)) {
+        rawBlobs = result.data;
+    } else if (result.data?.blobs && Array.isArray(result.data.blobs)) {
+        rawBlobs = result.data.blobs;
+    }
     const blobs = rawBlobs.map(mapBackendBlob);
     console.log(`[API] Received ${blobs.length} blobs for ${dateId}`);
 
