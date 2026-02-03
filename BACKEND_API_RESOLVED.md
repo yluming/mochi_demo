@@ -365,6 +365,47 @@ Authorization: Bearer <token>
 
 ---
 
+### 2.4 获取情绪评估
+
+**GET** `/emotion-blobs/eval`
+
+根据**当日**情绪碎片调用 LLM 做情绪评估并返回结果。不接收参数，始终使用当前日期（UTC 当日零点）对应的情绪碎片。
+
+**请求参数**：无。
+
+**成功响应**（200）
+
+```json
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "mood_category": "治愈/清新",
+    "emoji": "😌",
+    "reason": "今日记录较少",
+    "status_text": "每一天都值得被温柔对待"
+  }
+}
+```
+
+| 字段           | 类型   | 说明                                                         |
+|----------------|--------|--------------------------------------------------------------|
+| mood_category  | string | 情绪分类：治愈/清新、积极/能量、沉思/疲惫、敏感/波动 四类之一 |
+| emoji          | string | 对应类别的 emoji                                             |
+| reason         | string | 简短理由，不超过 20 字                                       |
+| status_text    | string | 12～22 字的温暖陪伴文案，不含引号与表情符号                  |
+
+**错误响应**
+
+| 状态码 | 说明                                             |
+|--------|--------------------------------------------------|
+| 401    | unauthorized                                     |
+| 405    | method not allowed                               |
+| 500    | 内部错误 / LLM 未返回有效内容                     |
+| 503    | 未配置启用的情绪评估提示词（提示词表无 is_enabled=true） |
+
+---
+
 ## 3. 聊天（Chat）
 
 以下接口均需鉴权：`Authorization: Bearer <token>`。
@@ -591,3 +632,48 @@ data: {"content":"下一段文本"}
 
 - `2026-02-02T00:00:00Z`
 - `2026-02-02T10:30:00+08:00`
+
+### 定时推送（极光 JPush）
+
+- **执行时间**：每天 8:00（cron `0 8 * * *`），对**当日**有情绪碎片的用户推送一条「温柔唤醒」通知。
+- **配置**：在 `config.yaml` 中配置 `jpush.app_key`、`jpush.master_secret`，或使用环境变量 `JPUSH_APP_KEY`、`JPUSH_MASTER_SECRET`。不配置则定时任务跳过推送。
+- **逻辑**：每个用户从当日「手动记录」「录音记录」类型的情绪碎片中**随机抽取一条**，用数据库中的 `prompt_notification_text` 提示词调用 LLM 生成一句通知文案，再通过极光 v3 API 按用户推送。
+- **客户端**：极光推送需用**别名**区分用户。客户端在登录后应调用极光 SDK 将 **alias 设置为当前用户 ID 的字符串**（如 `"123"`），以便服务端按 `audience.alias` 精准推送给对应用户。
+
+**推送内容（JSON）**
+
+服务端发给极光 v3 的请求体结构如下（每用户一条请求）：
+
+```json
+{
+  "platform": "all",
+  "audience": {
+    "alias": ["用户ID的字符串，如 \"123\""]
+  },
+  "notification": {
+    "alert": "生成的引导文案，15–30 字 + emoji，如：今天过得怎么样？来聊聊吧 🌸",
+    "android": {
+      "extras": {
+        "emotion_blob_id": "本次使用的情绪碎片 UUID，无碎片时为空字符串"
+      }
+    },
+    "ios": {
+      "extras": {
+        "emotion_blob_id": "本次使用的情绪碎片 UUID，无碎片时为空字符串"
+      }
+    }
+  }
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `notification.alert` | string | 通知栏展示的文案，由 LLM 根据当日情绪碎片生成 |
+| `notification.android.extras.emotion_blob_id` | string | 本次关联的情绪碎片 ID，客户端可据此跳转详情；无碎片时为 `""` |
+| `notification.ios.extras.emotion_blob_id` | string | 同上 |
+
+### 提示词表：定时推送文案（prompt_notification_text）
+
+- 表结构：`id`、`content`（提示词正文）、`is_enabled`、`created_at`。仅允许一条 `is_enabled = true`。
+- 提示词中占位符：`{情绪碎片的label+note信息}`，运行时会被替换为当前选中的情绪碎片的 label（标题）与 note（内容）信息。
+- 初始 content 可参考仓库内 `internal/prompts/notification_text.txt`，复制到数据库并设置一条 `is_enabled = true` 后，定时推送才会生效。
