@@ -431,21 +431,23 @@ Authorization: Bearer <token>
     "created_at": "2026-02-02T10:00:00Z",
     "updated_at": "2026-02-02T10:00:00Z",
     "is_ended": false,
-    "summary": "",
-    "emotion_blob_ids": []
+    "emotion_blob_ids": [],
+    "end_card_mode": "",
+    "end_card_text": ""
   }
 }
 ```
 
-| 字段             | 类型   | 说明                    |
-|------------------|--------|-------------------------|
-| id               | string | 会话 ID                 |
-| user_id          | int64  | 用户 ID                 |
-| created_at       | string | 创建时间，RFC3339       |
-| updated_at       | string | 更新时间，RFC3339       |
-| is_ended         | bool   | 是否已结束              |
-| summary          | string | 会话摘要                |
-| emotion_blob_ids | array  | 关联的情绪碎片 ID 列表  |
+| 字段             | 类型   | 说明                                    |
+|------------------|--------|-----------------------------------------|
+| id               | string | 会话 ID                                 |
+| user_id          | int64  | 用户 ID                                 |
+| created_at       | string | 创建时间，RFC3339                       |
+| updated_at       | string | 更新时间，RFC3339                       |
+| is_ended         | bool   | 是否已结束                              |
+| emotion_blob_ids | array  | 关联的情绪碎片 ID 列表                  |
+| end_card_mode    | string | 结束时的 End Card 类型：TODO / NUDGE，未结束时为空 |
+| end_card_text    | string | 结束时的 End Card 文案，未结束时为空     |
 
 **错误响应**
 
@@ -479,8 +481,9 @@ Authorization: Bearer <token>
         "created_at": "2026-02-02T10:00:00Z",
         "updated_at": "2026-02-02T10:00:00Z",
         "is_ended": false,
-        "summary": "",
-        "emotion_blob_ids": []
+        "emotion_blob_ids": [],
+        "end_card_mode": "TODO",
+        "end_card_text": "晚安，明天早点睡。"
       }
     ],
     "total": 25,
@@ -507,7 +510,50 @@ Authorization: Bearer <token>
 
 ---
 
-### 3.3 根据会话 ID 获取消息列表
+### 3.3 结束会话并生成 End Card
+
+**POST** `/chat/sessions/{sessionId}/end`
+
+结束指定会话：将会话标记为已结束，并根据本次对话上下文调用模型生成一条 End Card（TODO 或 NUDGE 类型及对应文案），写入会话的 `end_card_mode`、`end_card_text` 并返回。
+
+| 路径参数   | 类型   | 说明        |
+|------------|--------|-------------|
+| sessionId  | string | 聊天会话 ID |
+
+**请求体**：无（或空对象 `{}`）
+
+**成功响应**（200）
+
+```json
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "mode": "TODO",
+    "text": "晚安，明天早点睡。"
+  }
+}
+```
+
+| 字段 | 类型   | 说明                                      |
+|------|--------|-------------------------------------------|
+| mode | string | End Card 类型：`TODO` 或 `NUDGE`          |
+| text | string | End Card 文案（便签/轻提醒，≤20 或 ≤32 字） |
+
+**错误响应**
+
+| 状态码 | 说明                     |
+|--------|--------------------------|
+| 400    | sessionId 缺失           |
+| 401    | unauthorized             |
+| 403    | 无权操作该会话           |
+| 404    | 会话不存在               |
+| 405    | method not allowed       |
+| 500    | 内部错误（如会话已结束、模型/提示词服务异常等） |
+
+---
+
+### 3.4 根据会话 ID 获取消息列表
 
 **GET** `/chat/sessions/{sessionId}/messages`
 
@@ -563,7 +609,7 @@ Authorization: Bearer <token>
 
 ---
 
-### 3.4 发送消息（流式 SSE）
+### 3.5 发送消息（流式 SSE）
 
 **POST** `/chat/messages`
 
