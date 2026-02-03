@@ -36,7 +36,7 @@ const JarPhysics = ({ onSelect, height, blobs, newBlobIds, isArchive, isUnsealed
                 tsx: 1,
                 tsy: 1,
                 active: false,
-                release: isNewest ? 1200 : i * 100, // Significant delay for newest
+                release: isNewest ? 400 : i * 100, // Reduced delay from 1200 to 400 for snappier feel
                 settled: false,
             };
         });
@@ -153,18 +153,97 @@ const JarPhysics = ({ onSelect, height, blobs, newBlobIds, isArchive, isUnsealed
                     const delay = newCount * 150; // 150ms gap between each new item
                     newCount++;
 
-                    const x = mouthX + (Math.random() * 2 - 1) * mouthRange;
+                    // Determine initial position based on context
+                    let x, y, releaseTime, isActive;
+
+                    if (isArchive) {
+                        // Archive: Start at top (like makeBlobs) for simulation
+                        // We will simulate them falling instantly below
+                        x = mouthX + (Math.random() * 2 - 1) * 60;
+                        y = height / 2 - Math.random() * 100; // Start bit lower to save sim time
+                        releaseTime = 0;
+                        isActive = true;
+                    } else {
+                        // Today: Start falling from mouth with delay
+                        x = mouthX + (Math.random() * 2 - 1) * mouthRange;
+                        y = -30;
+                        releaseTime = currentElapsed + delay;
+                        isActive = false;
+                    }
+
                     return {
                         ...blob,
-                        x,
-                        y: -30,
-                        vx: 0,
-                        vy: 0,
-                        active: false,
-                        release: currentElapsed + delay
+                        x, y,
+                        vx: 0, vy: 0,
+                        active: isActive,
+                        release: releaseTime,
+                        settled: false // Will be set to true after pre-sim if isArchive
                     };
                 }
             });
+
+            // If Archive and we have NEW items, run synchronous pre-simulation to settle them
+            // We check newCount > 0 to avoid re-simulating and "exploding" already settled blobs on every click
+            if (isArchive && newCount > 0) {
+                const simSteps = 300; // ~5 seconds of sim checking
+                const g = 0.34;
+                const friction = 0.95;
+
+                for (let s = 0; s < simSteps; s++) {
+                    // Physics Step
+                    for (let i = 0; i < updatedBlobItems.length; i++) {
+                        const it = updatedBlobItems[i];
+                        if (!it.active) continue;
+
+                        it.vy += g;
+                        it.x += it.vx;
+                        it.y += it.vy;
+
+                        const left = it.r + 5;
+                        const right = JAR_WIDTH - it.r - 5;
+                        const floor = height - it.r - 10;
+
+                        if (it.x < left) { it.x = left; it.vx *= -0.4; }
+                        if (it.x > right) { it.x = right; it.vx *= -0.4; }
+                        if (it.y > floor) {
+                            it.y = floor;
+                            const impact = Math.min(1.2, Math.abs(it.vy) / 6);
+                            it.vy *= -0.2 * (0.6 + 0.4 * (1 - impact));
+                            it.vx *= friction;
+                        }
+                    }
+
+                    // Simple Collisions
+                    for (let i = 0; i < updatedBlobItems.length; i++) {
+                        for (let j = i + 1; j < updatedBlobItems.length; j++) {
+                            const a = updatedBlobItems[i]; const b = updatedBlobItems[j];
+                            if (!a.active || !b.active) continue;
+                            const dx = b.x - a.x; const dy = b.y - a.y;
+                            const dist = Math.hypot(dx, dy) || 0.001;
+                            const min = a.r + b.r - 2;
+                            if (dist < min) {
+                                const overlap = (min - dist) / 2;
+                                const nx = dx / dist; const ny = dy / dist;
+                                a.x -= nx * overlap; a.y -= ny * overlap;
+                                b.x += nx * overlap; b.y += ny * overlap;
+                                const rvx = b.vx - a.vx; const rvy = b.vy - a.vy;
+                                const vn = rvx * nx + rvy * ny;
+                                if (vn < 0) {
+                                    const imp = -0.7 * vn;
+                                    a.vx -= imp * nx * 0.5; a.vy -= imp * ny * 0.5;
+                                    b.vx += imp * nx * 0.5; b.vy += imp * ny * 0.5;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Stop them after sim and mark settled
+                updatedBlobItems.forEach(it => {
+                    it.vx = 0; it.vy = 0;
+                    it.settled = true;
+                });
+            }
 
             return [...updatedBlobItems, ...pearlItems];
         });
@@ -353,7 +432,8 @@ const JarPhysics = ({ onSelect, height, blobs, newBlobIds, isArchive, isUnsealed
                                     y: it.y,
                                     scaleX: it.sx,
                                     scaleY: it.sy,
-                                    cursor: it.isPearl ? 'default' : 'pointer'
+                                    cursor: it.isPearl ? 'default' : 'pointer',
+                                    opacity: it.active ? 1 : 0 // Hide until active to prevent "stuck at mouth" visual bug
                                 }}
                                 animate={
                                     isUnsealed ? { scale: [1, 1.15, 1] } :
@@ -481,7 +561,34 @@ function App() {
 
     const [onboardingStep, setOnboardingStep] = useState(0); // 0: Welcome, 1: Expression, 2: Done
     const [isOnboardingSaving, setIsOnboardingSaving] = useState(false);
-    const [todayBlobs, setTodayBlobs] = useState([]); // Start with empty for fresh onboarding
+    const [todayBlobs, setTodayBlobs] = useState(() => {
+        // Hydrate from local storage to prevent data loss on refresh/nav
+        try {
+            const saved = localStorage.getItem('mochi_local_blobs');
+            if (saved) {
+                const { date, blobs } = JSON.parse(saved);
+                // Simple check: Is it from "today" (Client time)?
+                // Note: unique ID check prevents duplicates against server data in currentData logic
+                const todayStr = new Date().toLocaleDateString();
+                if (date === todayStr) {
+                    console.log('[App] Restored local blobs:', blobs.length);
+                    return blobs;
+                }
+            }
+        } catch (e) {
+            console.warn('[App] Failed to load local blobs', e);
+        }
+        return [];
+    });
+
+    // Persist todayBlobs to local storage
+    useEffect(() => {
+        const todayStr = new Date().toLocaleDateString();
+        localStorage.setItem('mochi_local_blobs', JSON.stringify({
+            date: todayStr,
+            blobs: todayBlobs
+        }));
+    }, [todayBlobs]);
     // const [todayBlobs, setTodayBlobs] = useState(makeBlobs()); // 原本的今日案例数据
     const [showTooltip, setShowTooltip] = useState(false); // Post-onboarding guide
     const [showReportDrawer, setShowReportDrawer] = useState(false);
@@ -514,18 +621,22 @@ function App() {
 
     // Auto-scroll to center the active item (Today or selected date)
     // We use a more robust version that tries again if the first attempt fails
+    // Auto-scroll to center the active item (Today or selected date)
     useEffect(() => {
-        let attempts = 0;
-        const maxAttempts = 5;
-
         const scrollToActive = (instant = false) => {
-            if (dateRollerRef.current && timeline.length > 0) {
-                const activeItem = dateRollerRef.current.querySelector('.roller-item.active');
+            const container = dateRollerRef.current;
+            if (container && timeline.length > 0) {
+                const activeItem = container.querySelector('.roller-item.active');
                 if (activeItem) {
-                    activeItem.scrollIntoView({
-                        behavior: instant ? 'auto' : 'smooth',
-                        inline: 'center',
-                        block: 'nearest'
+                    const containerWidth = container.offsetWidth;
+                    const itemLeft = activeItem.offsetLeft;
+                    const itemWidth = activeItem.offsetWidth;
+                    // Calculate center position
+                    const targetScroll = itemLeft - (containerWidth / 2) + (itemWidth / 2);
+
+                    container.scrollTo({
+                        left: targetScroll,
+                        behavior: instant ? 'auto' : 'smooth'
                     });
                     return true;
                 }
@@ -533,20 +644,27 @@ function App() {
             return false;
         };
 
-        // First attempt: Instant scroll
-        const success = scrollToActive(true);
+        // Use requestAnimationFrame for reliable execution after layout paint
+        // Try immediately and for a few consecutive frames to handle re-mounts robustly
+        let frameId;
+        let attempts = 0;
+        const maxAttempts = 60; // Increased to ~1s to cover transition delays
 
-        // Subsequent attempts: Smooth correction after layout stabilizes
-        const timer = setInterval(() => {
+        const attemptScroll = () => {
+            const success = scrollToActive(attempts === 0); // Instant on first try
             attempts++;
-            const success = scrollToActive(attempts === 1 ? true : false);
-            if (success || attempts >= maxAttempts) {
-                clearInterval(timer);
-            }
-        }, 150);
 
-        return () => clearInterval(timer);
-    }, [timeline, selectedDate, currentPage]);
+            if (!success && attempts < maxAttempts) {
+                frameId = requestAnimationFrame(attemptScroll);
+            }
+        };
+
+        attemptScroll();
+
+        return () => {
+            if (frameId) cancelAnimationFrame(frameId);
+        };
+    }, [timeline, selectedDate, currentPage, onboardingStep]);
 
     // Reset to Today when returning to Home
     useEffect(() => {
@@ -584,9 +702,44 @@ function App() {
 
     // Fetch Daily Data when selectedDate changes
     useEffect(() => {
+        let isCancelled = false;
+        // Clear previous data to prevent leak/ghosting while loading new date
+        setDailyData(null);
+
         api.fetchDailyStatus(selectedDate).then(data => {
+            if (isCancelled) return;
+
+            // 1. Show blobs immediately (and any pre-generated summary if history)
             setDailyData(data);
-        }).catch(console.error);
+
+            const isToday = selectedDate === 'today';
+            const hasBlobs = data.blobs && data.blobs.length > 0;
+
+            // 2. Conditional & Decoupled Eval Fetch
+            // Today empty state: skip eval per user request. 
+            // History: user says they will directly request header, and fetchDailyStatus already includes it if pre-generated.
+            // If they want a FRESH eval for today with blobs, we call it here.
+            if (isToday && hasBlobs) {
+                api.fetchDailyEval().then(evalData => {
+                    if (isCancelled || !evalData) return;
+                    setDailyData(prev => prev ? ({
+                        ...prev,
+                        moodCategory: evalData.mood_category || prev.moodCategory,
+                        emoji: evalData.emoji || prev.emoji,
+                        statusText: evalData.status_text || prev.statusText
+                    }) : prev);
+                }).catch(err => console.warn('[App] Eval fetch failed:', err));
+            }
+        }).catch(err => {
+            if (!isCancelled) {
+                console.error(err);
+                setDailyData({ blobs: [], statusText: '暂无记录' });
+            }
+        });
+
+        return () => {
+            isCancelled = true;
+        };
     }, [selectedDate]);
 
     // Sync selectedBlob with todayBlobs for real-time updates (e.g. from optimistic to real)
@@ -638,6 +791,8 @@ function App() {
     const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
     const [discussedIds, setDiscussedIds] = useState(new Set());
     const [pendingPush, setPendingPush] = useState(null);
+    const [pendingDiscussion, setPendingDiscussion] = useState(null); // { blobId, note }
+    const [isInitialHistoryLoaded, setIsInitialHistoryLoaded] = useState(false);
 
     // 语音输入状态 (Global Voice State)
     const [isVoiceActive, setIsVoiceActive] = useState(false);
@@ -971,7 +1126,7 @@ function App() {
         // 仅在聊天页面、且有未关闭的会话时计时
         if (currentPage === 'chat' && chatSessions.length > 0) {
             const lastSession = chatSessions[chatSessions.length - 1];
-            if (lastSession && !lastSession.isClosed) {
+            if (lastSession && !lastSession.is_ended) {
                 inactivityTimerRef.current = setTimeout(() => {
                     console.log('[Inactivity] 10分钟未操作，自动结项');
                     handleEndSession();
@@ -996,12 +1151,24 @@ function App() {
                 try {
                     const data = await api.fetchChatSessions(10, null);
                     if (data.sessions && data.sessions.length > 0) {
-                        setChatSessions(data.sessions);
+                        console.log(`[App] Initial sessions loaded: ${data.sessions.length}. Fetching messages...`);
+                        // Populate each session with its messages
+                        const sessionsWithMessages = await Promise.all(data.sessions.map(async (s) => {
+                            try {
+                                const msgs = await api.fetchSessionMessages(s.id);
+                                return { ...s, messages: Array.isArray(msgs) ? msgs : [] };
+                            } catch (err) {
+                                console.error(`Failed to load messages for session ${s.id}`, err);
+                                return { ...s, messages: [] };
+                            }
+                        }));
+                        setChatSessions([...sessionsWithMessages].reverse());
                     }
                 } catch (e) {
                     console.error("Failed to load initial history", e);
                 } finally {
                     setIsLoadingHistory(false);
+                    setIsInitialHistoryLoaded(true);
                 }
             };
             loadInitial();
@@ -1055,14 +1222,25 @@ function App() {
                 // Find oldest session timestamp for cursor
                 // Current chatSessions: [Oldest, ..., Newest]
                 const oldestSession = chatSessions[0];
-                const beforeTime = oldestSession?.startTime;
+                const beforeTime = oldestSession?.created_at;
 
                 // Fetch older sessions
                 const data = await api.fetchChatSessions(10, beforeTime);
 
                 if (data.sessions && data.sessions.length > 0) {
-                    // Prepend new sessions
-                    setChatSessions(prev => [...data.sessions, ...prev]);
+                    console.log(`[App] Loaded ${data.sessions.length} more sessions. Fetching messages...`);
+                    // Populate each new session with its messages
+                    const sessionsWithMessages = await Promise.all(data.sessions.map(async (s) => {
+                        try {
+                            const msgs = await api.fetchSessionMessages(s.id);
+                            return { ...s, messages: Array.isArray(msgs) ? msgs : [] };
+                        } catch (err) {
+                            console.error(`Failed to load messages for session ${s.id}`, err);
+                            return { ...s, messages: [] };
+                        }
+                    }));
+                    // Prepend new sessions (reverse because backend returns Newest First, and we want Oldest at index 0)
+                    setChatSessions(prev => [...[...sessionsWithMessages].reverse(), ...prev]);
 
                     // Restore scroll position after render
                     // We use setTimeout to allow React to commit the update
@@ -1085,113 +1263,148 @@ function App() {
         }
     };
 
-    const startNewSession = (initialMessages = [], relatedBlobId = null) => {
-        const now = new Date();
+    const startNewSession = async (initialMessages = [], relatedBlobId = null) => {
+        try {
+            // 1. Call API to create a real session with optional blob association
+            const sessionData = await api.createChatSession(relatedBlobId ? [relatedBlobId] : []);
+            const realSessionId = sessionData.id;
+            const now = new Date();
 
-        // 1. Auto-close previous active session if exists
-        setChatSessions(prev => {
-            const lastSession = prev[prev.length - 1];
-            if (lastSession && !lastSession.isClosed) {
-                const endCardContent = '\u8fd9\u4e00\u6bb5\u5bf9\u8bdd\u5148\u653e\u5728\u8fd9\u91cc\uff0c\u4f60\u4eca\u5929\u5df2\u7ecf\u5f88\u68d2\u4e86\u3002';
-                const closedSession = { ...lastSession, isClosed: true, endCardContent, closedAt: now.toISOString() };
-                const otherSessions = prev.slice(0, -1);
+            // 2. Auto-close previous active session if exists
+            setChatSessions(prev => {
+                const lastSession = prev[prev.length - 1];
+                let sessionsToUpdate = [...prev];
 
-                // Add the new session after closing the previous one
-                const messagesWithISO = initialMessages.map(m => ({
-                    ...m,
-                    timestamp: m.timestamp || now.toISOString()
-                }));
+                if (lastSession && !lastSession.is_ended) {
+                    const summary = '这一段对话先放在这里,你今天已经很棒了。';
+                    const closedSession = {
+                        ...lastSession,
+                        is_ended: true,
+                        summary,
+                        updated_at: now.toISOString()
+                    };
+                    sessionsToUpdate[sessionsToUpdate.length - 1] = closedSession;
+                }
 
+                // Create the new session object based on API data
                 const newSession = {
-                    id: Date.now(),
-                    startTime: now.toISOString(),
-                    messages: messagesWithISO,
-                    relatedBlobIds: relatedBlobId ? [relatedBlobId] : []
+                    ...sessionData,
+                    // Ensure messages array exists for frontend rendering
+                    messages: initialMessages.map(m => ({
+                        id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+                        chat_session_id: realSessionId,
+                        type: m.type,
+                        content: m.content,
+                        created_at: m.created_at || now.toISOString()
+                    }))
                 };
 
-                return [...otherSessions, closedSession, newSession];
-            } else {
-                // Just add new session
-                const messagesWithISO = initialMessages.map(m => ({
-                    ...m,
-                    timestamp: m.timestamp || now.toISOString()
-                }));
+                return [...sessionsToUpdate, newSession];
+            });
 
-                const newSession = {
-                    id: Date.now(),
-                    startTime: now.toISOString(),
-                    messages: messagesWithISO,
-                    relatedBlobIds: relatedBlobId ? [relatedBlobId] : []
-                };
-                return [...prev, newSession];
-            }
-        });
+            return realSessionId;
+        } catch (err) {
+            console.error('[App] Failed to start new session:', err);
+            // Fallback or error UI could be added here
+        }
     };
 
-    // 切换到对话页时的自动引导 (Proactive Greeting)
+    // 切换到对话页时的自动引导 (Proactive Greeting) - 仅在没有历史记录时触发
     useEffect(() => {
-        if (currentPage === 'chat' && chatSessions.length === 0) {
+        if (currentPage === 'chat' && isInitialHistoryLoaded && chatSessions.length === 0) {
             // 稍作延迟，等页面切入动画完成
             const timer = setTimeout(() => {
                 startNewSession([
-                    { type: 'ai', text: '嗨！我是 Mochi。在这个安静的空间里，我会一直陪着你。今天过得怎么样？' }
+                    { type: 'ai', content: '嗨！我是 Mochi。在这个安静的空间里，我会一直陪着你。今天过得怎么样？' }
                 ]);
             }, 800);
             return () => clearTimeout(timer);
         }
-    }, [currentPage, chatSessions]);
+    }, [currentPage, isInitialHistoryLoaded, chatSessions.length]);
 
-    const handleSendMessage = async () => {
-        if (!chatInput.trim()) return;
+    const handleSendMessage = async (overrideText = null, overrideBlobId = null) => {
+        const textValue = (typeof overrideText === 'string') ? overrideText : chatInput;
+        if (!textValue.trim()) return;
 
-        const updatedHistory = chatSessions.length > 0 ? chatSessions[chatSessions.length - 1].messages : [];
-        const userMsg = { type: 'user', text: chatInput, timestamp: new Date().toISOString() };
+        // Identify currently active session (Newest-Last)
+        let activeSession = [...chatSessions].reverse().find(s => !s.is_ended);
 
-        // 1. Add User Message
-        setChatSessions(prev => {
-            const lastSession = prev[prev.length - 1];
-            const otherSessions = prev.slice(0, -1);
-            return [...otherSessions, { ...lastSession, messages: [...lastSession.messages, userMsg] }];
-        });
+        // 1. Lazy Creation: If no active session exists OR we're discussing a specific blob
+        if (!activeSession || overrideBlobId) {
+            console.log('[App] Creating session for message:', overrideBlobId ? `discussion (id: ${overrideBlobId})` : 'lazy');
+            try {
+                setIsTyping(true); // Visual feedback while creating session
+                const sessionData = await api.createChatSession(overrideBlobId ? [overrideBlobId] : []);
 
-        const currentInput = chatInput; // Capture current input
-        setChatInput('');
-        setIsTyping(true); // Show typing indicator while connecting
+                // CRITICAL: Ensure overrideBlobId is in the local object even if backend didn't echo it back
+                activeSession = {
+                    ...sessionData,
+                    messages: [],
+                    emotion_blob_ids: overrideBlobId
+                        ? [...new Set([...(sessionData.emotion_blob_ids || []), overrideBlobId])]
+                        : (sessionData.emotion_blob_ids || [])
+                };
+
+                console.log('[App] Session prepared for sync:', activeSession.id, 'blobs:', activeSession.emotion_blob_ids);
+
+                // Update local state immediately
+                setChatSessions(prev => [...prev, activeSession]);
+            } catch (err) {
+                console.error('[App] Failed to create session:', err);
+                setIsTyping(false);
+                return;
+            }
+        }
+
+        const userMsg = {
+            id: `msg_user_${Date.now()}`,
+            chat_session_id: activeSession.id,
+            type: 'user',
+            content: textValue,
+            created_at: new Date().toISOString()
+        };
+
+        // 2. Add User Message (find by exact ID)
+        setChatSessions(prev => prev.map(s =>
+            s.id === activeSession.id
+                ? { ...s, messages: [...(s.messages || []), userMsg] }
+                : s
+        ));
+
+        const currentInput = textValue; // Capture current input
+        if (typeof overrideText !== 'string') setChatInput('');
+        setIsTyping(true); // Maintain typing indicator for connection
 
         try {
-            // 2. Prepare for Stream: Create an empty AI message placeholder
-            let isFirstChunk = true;
+            // 3. Prepare for Stream: unique ID for this AI response to avoid race conditions
+            const aiMsgId = `msg_ai_${Date.now()}_stream`;
 
-            await api.streamChat(updatedHistory, currentInput, (chunk) => {
-                setChatSessions(prev => {
-                    const lastSession = prev[prev.length - 1];
-                    if (!lastSession) return prev;
+            await api.streamChat(activeSession.id, currentInput, activeSession.emotion_blob_ids || [], (chunk) => {
+                setChatSessions(prev => prev.map(s => {
+                    if (s.id !== activeSession.id) return s;
 
-                    const otherSessions = prev.slice(0, -1);
-                    const messages = [...lastSession.messages];
+                    const messages = [...(s.messages || [])];
+                    const aiMsgIndex = messages.findIndex(m => m.id === aiMsgId);
 
-                    if (isFirstChunk) {
-                        setIsTyping(false); // Hide dots once first chunk arrives
-                        // Add new AI message
+                    if (aiMsgIndex === -1) {
+                        setIsTyping(false);
                         messages.push({
+                            id: aiMsgId,
+                            chat_session_id: s.id,
                             type: 'ai',
-                            text: chunk,
-                            timestamp: new Date().toISOString()
+                            content: chunk,
+                            created_at: new Date().toISOString()
                         });
-                        isFirstChunk = false;
                     } else {
-                        // Append to last AI message
-                        const lastMsg = messages[messages.length - 1];
-                        if (lastMsg.type === 'ai') {
-                            messages[messages.length - 1] = {
-                                ...lastMsg,
-                                text: lastMsg.text + chunk
-                            };
-                        }
+                        const existingMsg = messages[aiMsgIndex];
+                        messages[aiMsgIndex] = {
+                            ...existingMsg,
+                            content: existingMsg.content + chunk
+                        };
                     }
 
-                    return [...otherSessions, { ...lastSession, messages }];
-                });
+                    return { ...s, messages };
+                }));
             });
         } catch (err) {
             console.error('Streaming failed:', err);
@@ -1199,6 +1412,28 @@ function App() {
             // Optional: Add error message to chat
         }
     };
+
+    // Auto-trigger discussion when arriving from home with a specific blob
+    useEffect(() => {
+        if (currentPage === 'chat' && pendingDiscussion && isInitialHistoryLoaded) {
+            const { id, note } = pendingDiscussion;
+            console.log('[App] Auto-triggering discussion for blob:', id);
+            setPendingDiscussion(null); // Clear to prevent loops
+
+            // Optimistically update the discussed state in dailyData
+            if (dailyData?.blobs) {
+                setDailyData(prev => ({
+                    ...prev,
+                    blobs: prev.blobs.map(b => b.id === id ? { ...b, isDiscussed: true } : b)
+                }));
+            }
+
+            // Small delay to ensure any layout transitions have settled
+            setTimeout(() => {
+                handleSendMessage(`我想聊聊“${note}”这件事儿`, id);
+            }, 300);
+        }
+    }, [currentPage, pendingDiscussion, isInitialHistoryLoaded]);
 
 
     const requestEventMemoryExtraction = (session) => {
@@ -1211,10 +1446,15 @@ function App() {
         const lastSnapshot = chatSessions[chatSessions.length - 1];
         setChatSessions(prev => {
             const lastSession = prev[prev.length - 1];
-            if (lastSession && lastSession.isClosed) return prev;
+            if (lastSession && lastSession.is_ended) return prev;
             const otherSessions = prev.slice(0, -1);
-            const endCardContent = '\u8fd9\u4e00\u6bb5\u5bf9\u8bdd\u5148\u653e\u5728\u8fd9\u91cc\uff0c\u4f60\u4eca\u5929\u5df2\u7ecf\u5f88\u68d2\u4e86\u3002';
-            return [...otherSessions, { ...lastSession, isClosed: true, endCardContent, closedAt: new Date().toISOString() }];
+            const summary = '这一段对话先放在这里，你今天已经很棒了。';
+            return [...otherSessions, {
+                ...lastSession,
+                is_ended: true,
+                summary,
+                updated_at: new Date().toISOString()
+            }];
         });
 
         requestEventMemoryExtraction(lastSnapshot);
@@ -1259,11 +1499,10 @@ function App() {
         localStorage.removeItem('mochi_token');
     };
 
-    // Auto-clear 'new' highlight when leaving 'home' and update timestamp
+    // Auto-clear 'new' highlight when leaving 'home'
     useEffect(() => {
         if (currentPage !== 'home') {
             setNewBlobIds(new Set()); // Clear all highlights locally
-            api.updateLastHomeVisit(); // Tell backend (mock) we left the feed
         }
     }, [currentPage]);
 
@@ -1314,9 +1553,9 @@ function App() {
                     alert("保存失败，请重试");
                 });
 
-            // 仅在真实没有碎片（第一个）时弹出恭喜弹窗
+            // 仅在真实没有碎片（无历史且今日无数据）时弹出恭喜弹窗
             // 延迟 4 秒，因为现在要等后端返回后球掉落
-            if (todayBlobs.length === 0) {
+            if (todayBlobs.length === 0 && (!timeline || timeline.length === 0)) {
                 setTimeout(() => {
                     setShowTooltip(true);
                     setTimeout(() => setShowTooltip(false), 8000);
@@ -1325,6 +1564,7 @@ function App() {
         } else {
             setOnboardingStep(2);
             setOnboardingInput('');
+            localStorage.setItem('mochi_onboarded', 'true'); // Persist onboarding state
         }
         setEntrySource('手动记录'); // 重置为默认
     };
@@ -1380,8 +1620,14 @@ function App() {
                                 if (phoneNumber.length >= 11) {
                                     api.login(phoneNumber).then((result) => {
                                         setIsLoggedIn(true);
-                                        // 新用户显示 onboarding（0），老用户直接跳过（2）
-                                        setOnboardingStep(result.isNewUser ? 0 : 2);
+                                        // Check local storage first (trusted on this device), then backend
+                                        const hasOnboarded = localStorage.getItem('mochi_onboarded') === 'true';
+
+                                        // Consider new ONLY if backend says so AND we haven't onboarded locally
+                                        // This prevents loop if backend is flaky but user has used app on this device
+                                        const isTrulyNew = result.isNewUser && !hasOnboarded;
+
+                                        setOnboardingStep(isTrulyNew ? 0 : 2);
                                     }).catch(err => alert('登录失败，请检查连接'));
                                 } else {
                                     alert('请输入有效的手机号');
@@ -1749,8 +1995,8 @@ function App() {
                                 {/* Dynamic Sessions */}
                                 {chatSessions.map((session) => {
                                     // Determine if session is "historical" (not today)
-                                    // Use closedAt if available, otherwise startTime
-                                    const sessionTime = session.closedAt || session.startTime;
+                                    // Use updated_at if ended, otherwise created_at
+                                    const sessionTime = session.is_ended ? session.updated_at : session.created_at;
                                     const isHistory = !isDateToday(sessionTime);
 
                                     return (
@@ -1759,31 +2005,30 @@ function App() {
                                             style={{
                                                 marginBottom: '30px',
                                                 opacity: isHistory ? 0.6 : 1,
-                                                // filter: isHistory ? 'grayscale(0.8)' : 'none', // User requested only opacity
                                                 transition: 'all 0.3s ease'
                                             }}
                                         >
                                             <div style={{ textAlign: 'center', margin: '20px 0', opacity: 0.8 }}>
-                                                <p style={{ fontSize: '12px', color: '#9CA3AF', fontWeight: 500 }}>{formatToSessionTime(session.startTime)}</p>
+                                                <p style={{ fontSize: '12px', color: '#9CA3AF', fontWeight: 500 }}>{formatToSessionTime(session.created_at)}</p>
                                             </div>
-                                            {session.messages.map((msg, i) => (
-                                                <div key={i} className={`chat-bubble ${msg.type}`}>
-                                                    {msg.text}
+                                            {(session.messages || []).map((msg) => (
+                                                <div key={msg.id} className={`chat-bubble ${msg.type}`}>
+                                                    {msg.content}
                                                     <span style={{ fontSize: '10px', opacity: 0.6, display: 'block', marginTop: '4px', textAlign: msg.type === 'user' ? 'right' : 'left' }}>
-                                                        {formatToHHmm(msg.timestamp)}
+                                                        {formatToHHmm(msg.created_at)}
                                                     </span>
                                                 </div>
                                             ))}
-                                            {session.isClosed && (
+                                            {session.is_ended && (
                                                 <div>
                                                     <div className="saved-indicator" style={{ marginBottom: '0', marginTop: '16px' }}>
                                                         <div className="dot" />
-                                                        <span>{`\u5df2\u5c01\u5b58\u4e8e ${formatToSessionTime(session.closedAt)}`}</span>
+                                                        <span>{`已封存于 ${formatToSessionTime(session.updated_at)}`}</span>
                                                     </div>
                                                     <div className="session-end-card" style={{ flexShrink: 0, marginTop: '12px' }}>
                                                         <div className="end-card-shine" />
                                                         <p style={{ fontSize: '14px', color: '#4B5563', lineHeight: '1.6', marginBottom: '0' }}>
-                                                            {session.endCardContent}
+                                                            {session.summary}
                                                         </p>
                                                     </div>
                                                 </div>
@@ -1858,7 +2103,7 @@ function App() {
                                         if (e.key === 'Enter') handleSendMessage();
                                     }}
                                 />
-                                <button className="send-button" onClick={handleSendMessage}>
+                                <button className="send-button" onClick={() => handleSendMessage()}>
                                     <ChevronRight size={24} />
                                 </button>
                             </div>
@@ -2040,11 +2285,11 @@ function App() {
 
                                     {/* Chat about this button */}
                                     <button
-                                        onClick={() => {
-                                            startNewSession([
-                                                { type: 'user', text: `我想聊聊“${selectedBlob.note}”这件事儿` },
-                                                { type: 'ai', text: '我在听。感觉这个瞬间对你很重要呢，想再多分享一点吗？' }
-                                            ], selectedBlob.id);
+                                        onClick={async () => {
+                                            const blobToDiscuss = { id: selectedBlob.id, note: selectedBlob.note };
+                                            // Set pending discussion to trigger auto-send on chat page
+                                            setPendingDiscussion(blobToDiscuss);
+                                            // Optimistic UI update for the discussed state
                                             setDiscussedIds(prev => new Set([...prev, selectedBlob.id]));
                                             setSelectedBlob(null);
                                             setCurrentPage('chat');
@@ -2119,8 +2364,8 @@ function App() {
                                     onClick={() => {
                                         const latestBlob = todayBlobs[todayBlobs.length - 1];
                                         startNewSession([
-                                            { type: 'user', text: `我想聊聊“${latestBlob.note}”这件事儿` },
-                                            { type: 'ai', text: '我在听。感觉这个瞬间对你很重要呢，想再多分享一点吗？' }
+                                            { type: 'user', content: `我想聊聊“${latestBlob.note}”这件事儿` },
+                                            { type: 'ai', content: '我在听。感觉这个瞬间对你很重要呢，想再多分享一点吗？' }
                                         ], latestBlob.id);
                                         setDiscussedIds(prev => new Set([...prev, latestBlob.id]));
                                         setShowTooltip(false);
@@ -2348,8 +2593,8 @@ function App() {
                         exit={{ opacity: 0, y: -100 }}
                         onClick={() => {
                             startNewSession([
-                                { type: 'user', text: `我想聊聊“${pendingPush.blob.note}”这件事儿` },
-                                { type: 'ai', text: `我在听。看到你刚才记录了【${pendingPush.blob.label}】，那个瞬间现在感觉好些了吗？` }
+                                { type: 'user', content: `我想聊聊“${pendingPush.blob.note}”这件事儿` },
+                                { type: 'ai', content: `我在听。看到你刚才记录了【${pendingPush.blob.label}】，那个瞬间现在感觉好些了吗？` }
                             ]);
                             setDiscussedIds(prev => new Set([...prev, pendingPush.id]));
                             setPendingPush(null);
@@ -2536,7 +2781,7 @@ function App() {
                                     <button className="action-btn secondary" onClick={() => {
                                         setShowReportDrawer(false);
                                         setCurrentPage('chat');
-                                        startNewSession([{ type: 'user', text: '想听听你对我的近期总结' }]);
+                                        startNewSession([{ type: 'user', content: '想听听你对我的近期总结' }]);
                                     }}>
                                         和 Mochi 聊聊总结
                                     </button>

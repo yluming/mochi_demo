@@ -202,7 +202,7 @@ body {
 
 .jar-container {
     position: relative;
-    padding: 10px 0;
+    padding: 10px 24px;
 }
 
 .jar-gloss {
@@ -238,7 +238,7 @@ body {
     display: flex;
     align-items: center;
     gap: 32px;
-    padding: 0;
+    padding: 0 24px;
     position: relative;
     overflow-x: scroll;
     -webkit-overflow-scrolling: touch;

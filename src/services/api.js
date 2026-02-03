@@ -6,7 +6,7 @@
 import { makeBlobs, enrichBlob } from '../utils/blobHelpers';
 
 // Toggle this to switch between Mock Data and Real API
-const USE_MOCK = true
+const USE_MOCK = false
     ;
 const API_BASE_URL = '/api';
 const DEMO_PASSWORD = 'User0'; // Hardcoded for demo integration
@@ -94,7 +94,7 @@ const getHeaders = (includeAuth = true) => {
     let token = localStorage.getItem('mochi_token');
 
     // Auto-clean the specific 'demo token' (with space) or 'demo_token' (with underscore)
-    if (token === 'demo token' || token === 'demo_token') {
+    if (token && (token === 'demo token' || token === 'demo_token')) {
         console.warn(`[getHeaders] Purging legacy mock token: ${token}`);
         localStorage.removeItem('mochi_token');
         token = null;
@@ -107,7 +107,76 @@ const getHeaders = (includeAuth = true) => {
     if (includeAuth && token) {
         headers['Authorization'] = `Bearer ${token}`;
     }
+
+    console.log(`[API] Headers generated (auth=${includeAuth}, hasToken=${!!token}):`, headers);
     return headers;
+};
+
+// --- Unread Blob Cache Management (Date-based) ---
+const UNREAD_IDS_KEY = 'mochi_unread_blob_ids';
+const UNREAD_DATE_KEY = 'mochi_unread_date';
+
+/**
+ * Get today's date in YYYY-MM-DD format
+ */
+const getTodayDateString = () => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+};
+
+/**
+ * Add a blob ID to the unread cache
+ * @param {number|string} id - Blob ID to cache
+ */
+export const addUnreadBlobId = (id) => {
+    const today = getTodayDateString();
+    const cachedDate = localStorage.getItem(UNREAD_DATE_KEY);
+
+    // If date changed, clear old cache
+    if (cachedDate && cachedDate !== today) {
+        clearUnreadBlobIds();
+    }
+
+    // Get existing IDs
+    const existingIds = getUnreadBlobIds();
+
+    // Add new ID if not already present
+    if (!existingIds.includes(String(id))) {
+        existingIds.push(String(id));
+        localStorage.setItem(UNREAD_IDS_KEY, existingIds.join(','));
+        localStorage.setItem(UNREAD_DATE_KEY, today);
+        console.log(`[Cache] Added unread blob ID: ${id}`);
+    }
+};
+
+/**
+ * Get cached unread blob IDs (auto-clears if date changed)
+ * @returns {Array<string>} Array of blob ID strings
+ */
+export const getUnreadBlobIds = () => {
+    const today = getTodayDateString();
+    const cachedDate = localStorage.getItem(UNREAD_DATE_KEY);
+
+    // If date changed, clear cache and return empty
+    if (cachedDate && cachedDate !== today) {
+        console.log(`[Cache] Date changed from ${cachedDate} to ${today}, clearing cache`);
+        clearUnreadBlobIds();
+        return [];
+    }
+
+    const idsStr = localStorage.getItem(UNREAD_IDS_KEY);
+    if (!idsStr) return [];
+
+    return idsStr.split(',').filter(id => id.trim());
+};
+
+/**
+ * Clear the unread blob cache
+ */
+export const clearUnreadBlobIds = () => {
+    localStorage.removeItem(UNREAD_IDS_KEY);
+    localStorage.removeItem(UNREAD_DATE_KEY);
+    console.log('[Cache] Cleared unread blob IDs');
 };
 
 // Callback function to handle token expiration
@@ -118,7 +187,22 @@ export const setTokenExpiredCallback = (callback) => {
 };
 
 // Helper function to handle API errors
-const handleApiError = (response) => {
+const handleApiError = async (response) => {
+    let errorDetail = '';
+    try {
+        const text = await response.text();
+        try {
+            const errorData = JSON.parse(text);
+            errorDetail = errorData.error || errorData.message || text;
+        } catch (e) {
+            errorDetail = text || `Status: ${response.status}`;
+        }
+    } catch (e) {
+        errorDetail = `Status: ${response.status}`;
+    }
+
+    console.error(`[API] Error (${response.status}):`, errorDetail);
+
     if (response.status === 401) {
         console.error('[API] Token expired or unauthorized');
         localStorage.removeItem('mochi_token');
@@ -141,14 +225,20 @@ const mapBackendBlob = (b) => {
         time += 'Z'; // Assume UTC if no timezone info present
     }
 
+    // Map backend categories to frontend sentiment tags
+    // backend results: "沉思紫/灰", "愈疗蓝/绿", "平静蓝/绿", etc.
+    let sentimentTag = b.category || '愈疗蓝/绿';
+    if (sentimentTag.startsWith('平静')) sentimentTag = '愈疗蓝/绿';
+
     return enrichBlob({
         id: b.id,
-        sentimentTag: b.category || '波动粉/红',
+        sentimentTag: sentimentTag,
         label: b.title || b.label || '新记录',
         time: time,
         note: b.content || b.note || '',
         source: b.source || '手动记录',
-        isDiscussed: !!b.is_discussed
+        isDiscussed: !!b.is_discussed,
+        color: b.color // Backend-driven color
     });
 };
 
@@ -183,12 +273,12 @@ export const fetchTimeline = async () => {
     // Calculate date range: from 30 days ago to tomorrow (to include today)
     const now = new Date();
     const to = new Date(now);
-    to.setDate(to.getDate() + 1); // Tomorrow to ensure today is included
-    to.setHours(0, 0, 0, 0);
+    to.setUTCHours(0, 0, 0, 0);
+    to.setUTCDate(to.getUTCDate() + 1); // Tomorrow UTC 00:00:00
 
     const from = new Date(now);
-    from.setDate(from.getDate() - 30); // 30 days ago
-    from.setHours(0, 0, 0, 0);
+    from.setUTCHours(0, 0, 0, 0);
+    from.setUTCDate(from.getUTCDate() - 30); // 30 days ago UTC 00:00:00
 
     const params = new URLSearchParams({
         from: from.toISOString(),
@@ -199,7 +289,7 @@ export const fetchTimeline = async () => {
         headers: getHeaders()
     });
     if (!response.ok) {
-        handleApiError(response);
+        await handleApiError(response);
         throw new Error('Failed to fetch timeline');
     }
     const result = await response.json();
@@ -267,7 +357,7 @@ const generateSmartUI = (blobs, isToday) => {
     });
 
     // Find dominant sentiment
-    let dominant = '平静蓝/绿';
+    let dominant = '愈疗蓝/绿';
     let maxCount = 0;
     Object.entries(counts).forEach(([tag, count]) => {
         if (count > maxCount) {
@@ -281,10 +371,10 @@ const generateSmartUI = (blobs, isToday) => {
         '能量橙/黄': { emoji: '⚡️', status: '能量满满的一天，效率很高', whisper: '这是你的高效时刻' },
         '波动粉/红': { emoji: '😰', status: '情绪起起伏伏，你始终能把自己接住', whisper: '听起来你现在需要一点点安静的空间...' },
         '沉思紫/灰': { emoji: '🤔', status: '有些深沉的思考，适合静心', whisper: '内心的声音值得被听见' },
-        '平静蓝/绿': { emoji: '😌', status: '虽然有些波折，但最后还是找到了平静', whisper: '平静是最仁贵的财富' }
+        '愈疗蓝/绿': { emoji: '😌', status: '虽然有些波折，但最后还是找到了平静', whisper: '平静是最仁贵的财富' }
     };
 
-    const config = mapping[dominant] || mapping['平静蓝/绿'];
+    const config = mapping[dominant] || mapping['愈疗蓝/绿'];
 
     // Add variations for statusText
     const variations = [
@@ -303,7 +393,7 @@ const generateSmartUI = (blobs, isToday) => {
         '能量橙/黄': '积极/能量',
         '波动粉/红': '敏感/波动',
         '沉思紫/灰': '沉思/疲惫',
-        '平静蓝/绿': '治愈/清新'
+        '愈疗蓝/绿': '治愈/清新'
     };
 
     return {
@@ -312,6 +402,37 @@ const generateSmartUI = (blobs, isToday) => {
         whisper: config.whisper,
         moodCategory: categoryMap[dominant] || '治愈/清新'
     };
+};
+
+/**
+ * Fetches daily evaluation from backend (AI summary)
+ * GET /emotion-blobs/eval
+ */
+export const fetchDailyEval = async () => {
+    if (USE_MOCK) {
+        return {
+            mood_category: "治愈/清新",
+            emoji: "😌",
+            status_text: "Mock: 每一天都值得被温柔对待"
+        };
+    }
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/emotion-blobs/eval`, {
+            headers: getHeaders()
+        });
+
+        if (!response.ok) {
+            console.warn('[API] Daily eval fetch failed, status:', response.status);
+            return null; // Fail gracefully
+        }
+
+        const result = await response.json();
+        return result.data;
+    } catch (err) {
+        console.error('[API] Daily eval error:', err);
+        return null; // Fail gracefully
+    }
 };
 
 /**
@@ -343,32 +464,53 @@ export const fetchDailyStatus = async (dateId) => {
         date: timelineItem.fullDate
     });
 
-    const response = await fetch(`${API_BASE_URL}/emotion-blobs?${params}`, {
-        headers: getHeaders()
-    });
-    if (!response.ok) {
-        handleApiError(response);
+    const isToday = dateId === 'today';
+
+    // Simplified: Only fetch blobs here. Eval is fired separately by the caller to decouple UI.
+    const blobsResponse = await fetch(`${API_BASE_URL}/emotion-blobs?${params}`, { headers: getHeaders() });
+    const evalData = null;
+
+    if (!blobsResponse.ok) {
+        await handleApiError(blobsResponse);
         throw new Error('Failed to fetch daily status');
     }
-    const result = await response.json();
-    const blobs = (result.data || []).map(mapBackendBlob);
+    const result = await blobsResponse.json();
+    const rawBlobs = result.data?.blobs || (Array.isArray(result.data) ? result.data : []);
+    const blobs = rawBlobs.map(mapBackendBlob);
     console.log(`[API] Received ${blobs.length} blobs for ${dateId}`);
 
-    const isToday = dateId === 'today';
     const smartUI = generateSmartUI(blobs, isToday);
 
-    // Timestamp-based Unread Logic
+    // 1. Override smartUI with backend daily summary if available (Old Format)
+    if (result.data?.dailySummary) {
+        const ds = result.data.dailySummary;
+        if (ds.events || ds.emotions) {
+            smartUI.statusText = ds.events || smartUI.statusText;
+            smartUI.whisper = ds.emotions || smartUI.whisper;
+        }
+    }
+
+    // 2. Override with new Eval Data if available (New Format)
+    if (evalData) {
+        console.log('[API] Applying Eval Data:', evalData);
+        if (evalData.mood_category) smartUI.moodCategory = evalData.mood_category;
+        if (evalData.emoji) smartUI.emoji = evalData.emoji;
+        if (evalData.status_text) smartUI.statusText = evalData.status_text;
+        // Note: 'reason' is ignored as per requirement
+    }
+
+    // Cache-based Unread Logic (only for today)
     if (isToday) {
-        const lastVisitStr = localStorage.getItem('mochi_last_home_visit');
-        const lastVisit = lastVisitStr ? new Date(lastVisitStr).getTime() : 0;
+        const unreadIds = getUnreadBlobIds();
+        console.log(`[API] Unread blob IDs from cache:`, unreadIds);
 
         blobs.forEach(b => {
-            const blobTime = new Date(b.time).getTime();
-            // If blob is newer than last visit, it is unread
-            if (blobTime > lastVisit) {
-                b.isUnread = true;
-            }
+            // Mark as unread if ID is in cache
+            b.isUnread = unreadIds.includes(String(b.id));
         });
+
+        // Clear cache after comparison
+        clearUnreadBlobIds();
     }
 
     // Construct the daily status object to match expected format
@@ -388,17 +530,7 @@ export const fetchDailyStatus = async (dateId) => {
     };
 };
 
-/**
- * Updates the 'last home visit' timestamp.
- * Call this when leaving the home screen.
- */
-export const updateLastHomeVisit = async () => {
-    const now = new Date().toISOString();
-    console.log('[API] Updating Last Home Visit:', now);
-    localStorage.setItem('mochi_last_home_visit', now);
-    if (USE_MOCK) return;
-    // In real app: await fetch(`${API_BASE_URL}/user/visit`, { method: 'POST', body: { time: now } });
-};
+
 
 /**
  * Register a new user
@@ -479,17 +611,26 @@ export const login = async (phoneNumber) => {
         // 直接登录成功，用户是已有账户
         return { ...result, isNewUser: false };
     } catch (err) {
-        // If login fails (user might not exist), try registering once
-        console.warn('Login failed, attempting auto-registration...', err);
-        try {
-            await register(phoneNumber);
-            console.log('Registration success, retrying login...');
-            const result = await attemptLogin();
-            // 经过注册流程，这是新用户
-            return { ...result, isNewUser: true };
-        } catch (regErr) {
-            console.error('Auto-registration or retry failed:', regErr);
-            throw new Error('登录及自动注册均失败，请检查后端状态或网络');
+        // Only attempt registration if the error likely indicates "User Not Found" or "Wrong Password" (401)
+        // Adjust this check based on actual backend behavior for "User not found"
+        // Verified: Backend returns 401 for "用户名或密码错误"
+        const isUserNotFound = err.message.includes('401') || err.message.includes('User not found');
+
+        if (isUserNotFound) {
+            console.warn('User not found, attempting auto-registration...');
+            try {
+                await register(phoneNumber);
+                console.log('Registration success, retrying login...');
+                const result = await attemptLogin();
+                // 经过注册流程，这是新用户
+                return { ...result, isNewUser: true };
+            } catch (regErr) {
+                console.error('Auto-registration or retry failed:', regErr);
+                throw new Error('注册失败，请检查网络');
+            }
+        } else {
+            // Re-throw other errors (500, Network, etc.)
+            throw err;
         }
     }
 };
@@ -509,7 +650,7 @@ export const createEmotionBlob = async (content, source = '手动记录') => {
         if (!isSupported && !USE_MOCK) {
             console.log(`Source '${source}' not yet supported by backend, using mock for now.`);
         }
-        return enrichBlob({
+        const newBlob = enrichBlob({
             id: Date.now(),
             sentimentTag: '波动粉/红',
             label: '新记录',
@@ -517,8 +658,13 @@ export const createEmotionBlob = async (content, source = '手动记录') => {
             note: content,
             source: source,
             isDiscussed: false,
-            isUnread: true // Newer than last visit, so true
+            isUnread: true
         });
+
+        // Cache the new blob ID for unread tracking
+        addUnreadBlobId(newBlob.id);
+
+        return newBlob;
     }
 
     const response = await fetch(`${API_BASE_URL}/emotion-blobs`, {
@@ -531,7 +677,14 @@ export const createEmotionBlob = async (content, source = '手动记录') => {
 
     // The backend returns { code, msg, data: { ...blob } }
     console.log('[API] Blob Created Response:', result);
-    return mapBackendBlob(result.data || result);
+    const createdBlob = mapBackendBlob(result.data || result);
+
+    // Cache the new blob ID for unread tracking
+    if (createdBlob && createdBlob.id) {
+        addUnreadBlobId(createdBlob.id);
+    }
+
+    return createdBlob;
 };
 
 /**
@@ -540,8 +693,94 @@ export const createEmotionBlob = async (content, source = '手动记录') => {
  * @param {string} userMessage - The new user message
  * @param {Function} onChunk - Callback for each token/chunk received (text part)
  */
-export const streamChat = async (history, userMessage, onChunk) => {
-    console.log('[API] Stream Chat Request:', userMessage);
+/**
+ * Create a new chat session.
+ * POST /chat/sessions
+ * @param {string[]} emotion_blob_ids - List of emotion blob IDs to associate
+ */
+export const createChatSession = async (emotion_blob_ids = []) => {
+    console.log('[API] Creating new chat session with blobs:', emotion_blob_ids);
+
+    if (USE_MOCK) {
+        await new Promise(r => setTimeout(r, 500));
+        return {
+            id: `session_${Date.now()}`,
+            created_at: new Date().toISOString(),
+            is_ended: false,
+            summary: '',
+            emotion_blob_ids: emotion_blob_ids
+        };
+    }
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/chat/sessions`, {
+            method: 'POST',
+            headers: getHeaders(),
+            body: JSON.stringify({
+                emotion_blob_ids,
+                emotionBlobIds: emotion_blob_ids // Double-safe: add camelCase alias
+            })
+        });
+
+        if (!response.ok) {
+            await handleApiError(response);
+            throw new Error('Create session failed');
+        }
+
+        const result = await response.json();
+        console.log('[API] New Chat Session Response:', result);
+        const data = result.data || result;
+        const session = Array.isArray(data) ? data[0] : data;
+
+        if (session && !session.messages) {
+            session.messages = [];
+        }
+        return session;
+    } catch (err) {
+        console.error('[API] Create Session Error:', err);
+        throw err;
+    }
+};
+
+/**
+ * Fetch messages for a specific session.
+ * GET /chat/sessions/{sessionId}/messages
+ */
+export const fetchSessionMessages = async (sessionId) => {
+    console.log(`[API] Fetching messages for session: ${sessionId}`);
+
+    if (USE_MOCK) {
+        return []; // Typically handled by currentSession history in mock
+    }
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/chat/sessions/${sessionId}/messages`, {
+            headers: getHeaders()
+        });
+
+        if (!response.ok) {
+            await handleApiError(response);
+            throw new Error('Fetch session messages failed');
+        }
+
+        const result = await response.json();
+        return result.data || result;
+    } catch (err) {
+        console.error('[API] Fetch Messages Error:', err);
+        throw err;
+    }
+};
+
+/**
+ * Enhanced streamChat to support Mochi backend format.
+ * POST /chat/messages
+ * @param {string} sessionId - Target session ID
+ * @param {string} userMessage - Message text
+ * @param {string[]} emotionBlobIds - Related blob IDs
+ * @param {Function} onChunk - Callback for each tokens
+ */
+export const streamChat = async (sessionId, userMessage, emotionBlobIds = [], onChunk) => {
+    console.log('[API] Stream Chat Request:', { sessionId, userMessage, emotionBlobIds });
 
     if (USE_MOCK) {
         // Mock Streaming Implementation
@@ -555,16 +794,19 @@ export const streamChat = async (history, userMessage, onChunk) => {
     }
 
     try {
-        const response = await fetch(`${API_BASE_URL}/chat/stream`, {
+        const response = await fetch(`${API_BASE_URL}/chat/messages`, {
             method: 'POST',
             headers: getHeaders(),
             body: JSON.stringify({
-                messages: [...history, { role: 'user', content: userMessage }]
+                sessionId,
+                message: userMessage,
+                emotionBlobIds,
+                emotion_blob_ids: emotionBlobIds // Double-safe: add snake_case alias
             })
         });
 
         if (!response.ok) {
-            handleApiError(response);
+            await handleApiError(response);
             throw new Error('Chat stream failed');
         }
 
@@ -574,9 +816,13 @@ export const streamChat = async (history, userMessage, onChunk) => {
 
         while (true) {
             const { done, value } = await reader.read();
-            if (done) break;
+            if (done) {
+                console.log('[API] Stream Reader: Done');
+                break;
+            }
 
             const chunk = decoder.decode(value, { stream: true });
+            console.log('[API] Stream Raw Chunk Received:', chunk);
             buffer += chunk;
 
             const lines = buffer.split('\n');
@@ -586,24 +832,23 @@ export const streamChat = async (history, userMessage, onChunk) => {
             for (const line of lines) {
                 const trimmed = line.trim();
                 if (!trimmed) continue;
+                console.log('[API] SSE line:', trimmed);
 
-                // Handle SSE format "data: ..."
-                if (trimmed.startsWith('data: ')) {
-                    const data = trimmed.slice(6);
-                    if (data === '[DONE]') continue;
+                // Standard SSE format: "data: <json>" or "data:<json>"
+                if (trimmed.startsWith('data:')) {
+                    // Extract the part after "data:" (ignoring first space if exists)
+                    const dataPart = trimmed.slice(5).trimStart();
+                    if (!dataPart) continue;
 
                     try {
-                        const json = JSON.parse(data);
-                        // Compatible with standard LLM responses or Mochi backend
-                        const content = json.content || json.choices?.[0]?.delta?.content || json.text;
-                        if (content) onChunk(content);
-                        else onChunk(data);
+                        const json = JSON.parse(dataPart);
+                        if (json.content) {
+                            console.log('[API] SSE Triggering onChunk with content:', json.content);
+                            onChunk(json.content);
+                        }
                     } catch (e) {
-                        onChunk(data); // Raw text fallback
+                        console.warn('[API] SSE line parsing error:', e, 'Data:', dataPart);
                     }
-                } else {
-                    // Fallback: If no "data:" prefix, assume raw text stream
-                    onChunk(trimmed);
                 }
             }
         }
@@ -622,50 +867,36 @@ export const streamChat = async (history, userMessage, onChunk) => {
 export const fetchChatSessions = async (limit = 10, beforeTime = null) => {
     console.log(`[API] Fetching chat history (limit=${limit}, before=${beforeTime})`);
 
-    if (USE_MOCK) {
-        await new Promise(r => setTimeout(r, 800)); // Simulate network delay
+    // Real API implementation (L3.2)
+    try {
+        const url = `${API_BASE_URL}/chat/sessions?page=${beforeTime ? '2' : '1'}`;
+        console.log(`[API] Fetching sessions from: ${url}`);
 
-        // If no 'beforeTime', this is the initial load (latest sessions).
-        // We defaults to returning the most recent history.
-        const baseDate = beforeTime ? new Date(beforeTime) : new Date();
-
-        // Generate fake historical sessions for demo
-        const newSessions = Array.from({ length: limit }).map((_, i) => {
-            const date = new Date(baseDate);
-            // If initial load, start from yesterday (simulating history view)
-            // If scrolling up, go back further from the cursor
-            const offsetDays = beforeTime ? (i + 1) : i;
-
-            // Set to fixed time (14:30) to avoid midnight crossover issues during late night testing
-            date.setDate(date.getDate() - offsetDays);
-            date.setHours(14, 30, 0, 0);
-
-            // Ensure we don't accidentally create a future date if baseDate was "now"
-            if (date > new Date()) {
-                date.setDate(date.getDate() - 1);
-            }
-
-            return {
-                id: `history_${Date.now()}_${i}_${offsetDays}`,
-                startTime: date.toISOString(),
-                closedAt: new Date(date.getTime() + 1000 * 60 * 30).toISOString(), // Ends at 15:00
-                isClosed: true,
-                endCardContent: `这是 ${offsetDays === 0 ? '今天' : offsetDays + ' 天前'} 的对话记录，那时候的你也很棒。`,
-                messages: [
-                    { type: 'user', text: `历史记录测试消息 (Day -${offsetDays}) ${i + 1}`, timestamp: date.toISOString() },
-                    { type: 'ai', text: `也就是 ${date.toLocaleDateString()} 的事情了。`, timestamp: new Date(date.getTime() + 2000).toISOString() }
-                ]
-            };
+        const response = await fetch(url, {
+            headers: getHeaders()
         });
 
-        // Reverse to keep chronological order (oldest -> new, but we generated new->old)
-        return { sessions: newSessions.reverse(), hasMore: true };
-    }
+        if (!response.ok) {
+            await handleApiError(response);
+            throw new Error('Fetch sessions failed');
+        }
 
-    // Real API implementation placeholder
-    // const params = new URLSearchParams({ limit, ...(beforeTime ? { before: beforeTime } : {}) });
-    // const res = await fetch(`${API_BASE_URL}/chat/sessions?${params}`);
-    // return res.json();
+        const result = await response.json();
+        console.log('[API] Chat Sessions Result:', result);
+        const rawSessions = result.data?.sessions || result.data || result || [];
+        const sessions = (Array.isArray(rawSessions) ? rawSessions : []).map(s => ({
+            ...s,
+            messages: s.messages || []
+        }));
+
+        return {
+            sessions,
+            hasMore: result.data?.total > (result.data?.page * result.data?.pageSize)
+        };
+    } catch (err) {
+        console.error('[API] Fetch Sessions Error:', err);
+        throw err;
+    }
 };
 
 export default {
@@ -674,8 +905,12 @@ export default {
     login,
     register,
     createEmotionBlob,
+    createChatSession,
+    fetchSessionMessages,
+    streamChat,
+    fetchSessionMessages,
     streamChat,
     fetchChatSessions,
-    setTokenExpiredCallback,
-    updateLastHomeVisit
+    fetchDailyEval,
+    setTokenExpiredCallback
 };
