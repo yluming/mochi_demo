@@ -511,6 +511,7 @@ Authorization: Bearer <token>
 ---
 
 ### 3.3 结束会话并生成 End Card
+
 **POST** `/chat/sessions/{sessionId}/end`
 
 结束指定会话：将会话标记为已结束，并根据本次对话上下文调用模型生成一条 End Card（TODO 或 NUDGE 类型及对应文案），写入会话的 `end_card_mode`、`end_card_text` 并返回。
@@ -625,8 +626,8 @@ Authorization: Bearer <token>
 | 字段            | 类型   | 必填 | 说明                           |
 |-----------------|--------|------|--------------------------------|
 | sessionId       | string | 是   | 聊天会话 ID                    |
-| message         | string | 是   | 用户消息文本                   |
-| emotionBlobIds  | array  | 否   | 关联的情绪碎片 ID，用于上下文  |
+| message         | string | 否   | 用户消息文本；当 `emotionBlobIds` 为空时必填 |
+| emotionBlobIds  | array  | 否   | 关联的情绪碎片 ID，用于上下文；当 `message` 为空时至少传 1 个 |
 
 **成功响应**（200）
 
@@ -640,11 +641,16 @@ data: {"content":"下一段文本"}
 
 客户端解析 `data:` 后的 JSON，取 `content` 字段拼接到完整回复。
 
+**补充说明**
+
+- **默认用户文案**：当客户端 `message` 为空、且 `emotionBlobIds` 至少包含 1 个元素时，服务端会将本轮用户消息的 `content` 置为 `我想聊聊{情绪碎片标题}这件事`（标题取关联碎片的 `title`，若取不到则降级为通用文案）。
+- **标记已讨论**：当本次请求携带 `emotionBlobIds` 且消息对成功落库后，服务端会将对应情绪碎片标记为 `is_discussed=true`（best-effort；失败不影响主流程返回）。
+
 **错误响应**（在流开始前返回）
 
 | 状态码 | 说明                             |
 |--------|----------------------------------|
-| 400    | invalid body / sessionId required / message required |
+| 400    | invalid body / sessionId required / message required（当 emotionBlobIds 为空时） |
 | 401    | unauthorized                     |
 | 403    | forbidden（非会话拥有者）         |
 | 404    | session not found                |
