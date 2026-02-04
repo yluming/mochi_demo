@@ -511,7 +511,6 @@ Authorization: Bearer <token>
 ---
 
 ### 3.3 结束会话并生成 End Card
-
 **POST** `/chat/sessions/{sessionId}/end`
 
 结束指定会话：将会话标记为已结束，并根据本次对话上下文调用模型生成一条 End Card（TODO 或 NUDGE 类型及对应文案），写入会话的 `end_card_mode`、`end_card_text` 并返回。

@@ -624,7 +624,25 @@ body {
 }
 
 .next-button:active {
-    transform: scale(0.95);
+    transform: scale(0.9);
+}
+
+@keyframes typing-bounce {
+
+    0%,
+    100% {
+        transform: translateY(0);
+        opacity: 0.5;
+    }
+
+    50% {
+        transform: translateY(-4px);
+        opacity: 1;
+    }
+}
+
+.animate-bounce {
+    animation: typing-bounce 1s infinite;
 }
 
 .expression-input-area {

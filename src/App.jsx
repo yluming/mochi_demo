@@ -802,7 +802,7 @@ function App() {
     const [showLogin, setShowLogin] = useState(true);
     const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
     const [discussedIds, setDiscussedIds] = useState(new Set());
-    const [pendingPush, setPendingPush] = useState(null);
+
     const [pendingDiscussion, setPendingDiscussion] = useState(null); // { blobId, note }
     const [isInitialHistoryLoaded, setIsInitialHistoryLoaded] = useState(false);
 
@@ -1297,7 +1297,10 @@ function App() {
                     const closedSession = {
                         ...lastSession,
                         is_ended: true,
-                        summary,
+                        is_ended: true,
+                        // summary: summary, // Deprecated
+                        end_card_text: summary || '', // Allow empty string
+                        end_card_mode: 'NUDGE', // Default for auto-close
                         updated_at: now.toISOString()
                     };
                     sessionsToUpdate[sessionsToUpdate.length - 1] = closedSession;
@@ -1362,31 +1365,42 @@ function App() {
                         : (sessionData.emotion_blob_ids || [])
                 };
 
-                console.log('[App] Session prepared for sync:', activeSession.id, 'blobs:', activeSession.emotion_blob_ids);
+                // Add new session to state AND add the message in one go to avoid race conditions
+                const userMsg = {
+                    id: `msg_user_${Date.now()}`,
+                    chat_session_id: activeSession.id,
+                    type: 'user',
+                    content: textValue,
+                    created_at: new Date().toISOString()
+                };
 
-                // Update local state immediately
-                setChatSessions(prev => [...prev, activeSession]);
+                setChatSessions(prev => [...prev, {
+                    ...activeSession,
+                    messages: [userMsg]
+                }]);
+
+                console.log('[App] New session created and message added:', activeSession.id);
             } catch (err) {
                 console.error('[App] Failed to create session:', err);
                 setIsTyping(false);
                 return;
             }
+        } else {
+            // 2. Existing Session: Add User Message
+            const userMsg = {
+                id: `msg_user_${Date.now()}`,
+                chat_session_id: activeSession.id,
+                type: 'user',
+                content: textValue,
+                created_at: new Date().toISOString()
+            };
+
+            setChatSessions(prev => prev.map(s =>
+                s.id === activeSession.id
+                    ? { ...s, messages: [...(s.messages || []), userMsg] }
+                    : s
+            ));
         }
-
-        const userMsg = {
-            id: `msg_user_${Date.now()}`,
-            chat_session_id: activeSession.id,
-            type: 'user',
-            content: textValue,
-            created_at: new Date().toISOString()
-        };
-
-        // 2. Add User Message (find by exact ID)
-        setChatSessions(prev => prev.map(s =>
-            s.id === activeSession.id
-                ? { ...s, messages: [...(s.messages || []), userMsg] }
-                : s
-        ));
 
         const currentInput = textValue; // Capture current input
         if (typeof overrideText !== 'string') setChatInput('');
@@ -1458,50 +1472,63 @@ function App() {
         console.log('[event-memory] extract after session end', session);
     };
 
-    const handleEndSession = () => {
+    const handleEndSession = async () => {
         if (chatSessions.length === 0) return;
-        const lastSnapshot = chatSessions[chatSessions.length - 1];
+        const lastSession = chatSessions[chatSessions.length - 1];
+        if (lastSession.is_ended) return;
+
+        // 1. Optimistic Update: Explicit "Generating" state
         setChatSessions(prev => {
-            const lastSession = prev[prev.length - 1];
-            if (lastSession && lastSession.is_ended) return prev;
-            const otherSessions = prev.slice(0, -1);
-            const summary = '这一段对话先放在这里，你今天已经很棒了。';
-            return [...otherSessions, {
-                ...lastSession,
+            const current = prev[prev.length - 1];
+            if (!current || current.id !== lastSession.id) return prev;
+            const others = prev.slice(0, -1);
+            return [...others, {
+                ...current,
                 is_ended: true,
-                summary,
-                updated_at: new Date().toISOString()
+                updated_at: new Date().toISOString(), // Immediate timestamp
+                is_generating_card: true, // Show loading UI
+                end_card_text: ''
             }];
         });
 
-        requestEventMemoryExtraction(lastSnapshot);
+        requestEventMemoryExtraction(lastSession);
+
+        try {
+            const res = await api.endChatSession(lastSession.id);
+            // 2. Success Update: Replace loading with actual content
+            setChatSessions(prev => {
+                const current = prev[prev.length - 1];
+                if (!current || current.id !== lastSession.id) return prev;
+                const others = prev.slice(0, -1);
+                return [...others, {
+                    ...current,
+                    is_ended: true,
+                    is_generating_card: false,
+                    end_card_text: res.text || '',
+                    end_card_mode: res.mode,
+                    updated_at: new Date().toISOString()
+                }];
+            });
+        } catch (error) {
+            console.error('Failed to end session remote:', error);
+            // 3. Fallback: Stop loading, empty text (hidden)
+            setChatSessions(prev => {
+                const current = prev[prev.length - 1];
+                if (!current || current.id !== lastSession.id) return prev;
+                const others = prev.slice(0, -1);
+                return [...others, {
+                    ...current,
+                    is_ended: true,
+                    is_generating_card: false,
+                    end_card_text: '', // Hide if failed
+                    end_card_mode: 'NUDGE',
+                    updated_at: new Date().toISOString()
+                }];
+            });
+        }
     };
 
-    // 模拟推送通知逻辑 (Push Notification Simulation)
-    useEffect(() => {
-        if (isLoggedIn && currentPage === 'home' && !pendingPush) {
-            const timer = setTimeout(() => {
-                const undiscussedIdsList = todayBlobs.filter(b => !discussedIds.has(b.id)).map(b => b.id);
 
-                // Simulate: POST /api/notifications/suggest { undiscussedBlobIds: [...] }
-                console.log('[Notification-API] Requesting suggestion with IDs:', undiscussedIdsList.length > 0 ? undiscussedIdsList : null);
-
-                if (undiscussedIdsList.length > 0) {
-                    // Randomly pick one as the "Backend choice"
-                    const targetId = undiscussedIdsList[Math.floor(Math.random() * undiscussedIdsList.length)];
-                    const target = todayBlobs.find(b => b.id === targetId);
-
-                    setPendingPush({
-                        id: target.id,
-                        title: 'Mochi 刚才在想...',
-                        body: `关于【${target.label}】的那个瞬间，想听你多说几句点... ✨`,
-                        blob: target
-                    });
-                }
-            }, 12000); // 12 seconds for demo purposes
-            return () => clearTimeout(timer);
-        }
-    }, [isLoggedIn, currentPage, todayBlobs, discussedIds, pendingPush]);
 
     const handleLogout = () => {
         setIsLoggedIn(false);
@@ -2030,7 +2057,20 @@ function App() {
                                             </div>
                                             {(session.messages || []).map((msg) => (
                                                 <div key={msg.id} className={`chat-bubble ${msg.type}`}>
-                                                    {msg.content}
+                                                    {/* Markdown-like rendering for bold and newlines */}
+                                                    {(() => {
+                                                        if (!msg.content) return null;
+                                                        return msg.content.split('\n').map((line, lineIdx) => (
+                                                            <div key={lineIdx} style={{ minHeight: line.trim() === '' ? '10px' : 'auto' }}>
+                                                                {line.split(/(\*\*.*?\*\*)/g).map((part, partIdx) => {
+                                                                    if (part.startsWith('**') && part.endsWith('**')) {
+                                                                        return <strong key={partIdx}>{part.slice(2, -2)}</strong>;
+                                                                    }
+                                                                    return part;
+                                                                })}
+                                                            </div>
+                                                        ));
+                                                    })()}
                                                     <span style={{ fontSize: '10px', opacity: 0.6, display: 'block', marginTop: '4px', textAlign: msg.type === 'user' ? 'right' : 'left' }}>
                                                         {formatToHHmm(msg.created_at)}
                                                     </span>
@@ -2042,12 +2082,26 @@ function App() {
                                                         <div className="dot" />
                                                         <span>{`已封存于 ${formatToSessionTime(session.updated_at)}`}</span>
                                                     </div>
-                                                    <div className="session-end-card" style={{ flexShrink: 0, marginTop: '12px' }}>
-                                                        <div className="end-card-shine" />
-                                                        <p style={{ fontSize: '14px', color: '#4B5563', lineHeight: '1.6', marginBottom: '0' }}>
-                                                            {session.summary}
-                                                        </p>
-                                                    </div>
+
+                                                    {session.is_generating_card ? (
+                                                        <div className="session-end-card" style={{ flexShrink: 0, marginTop: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', minHeight: '46px' }}>
+                                                            <span style={{ fontSize: '13px', color: '#9CA3AF' }}>回顾一下我们的对话</span>
+                                                            <div style={{ display: 'flex', gap: '3px', marginTop: '2px' }}>
+                                                                <div className="animate-bounce" style={{ width: '4px', height: '4px', background: '#9CA3AF', borderRadius: '50%', animationDelay: '0s' }} />
+                                                                <div className="animate-bounce" style={{ width: '4px', height: '4px', background: '#9CA3AF', borderRadius: '50%', animationDelay: '0.15s' }} />
+                                                                <div className="animate-bounce" style={{ width: '4px', height: '4px', background: '#9CA3AF', borderRadius: '50%', animationDelay: '0.3s' }} />
+                                                            </div>
+                                                        </div>
+                                                    ) : (
+                                                        (session.end_card_text || session.summary) && (
+                                                            <div className="session-end-card" style={{ flexShrink: 0, marginTop: '12px' }}>
+                                                                <div className="end-card-shine" />
+                                                                <p style={{ fontSize: '14px', color: '#4B5563', lineHeight: '1.6', marginBottom: '0' }}>
+                                                                    {session.end_card_text || session.summary}
+                                                                </p>
+                                                            </div>
+                                                        )
+                                                    )}
                                                 </div>
                                             )}
                                         </div>
@@ -2601,58 +2655,7 @@ function App() {
                     </div>
                 )}
 
-                {/* Simulated Push Notification Banner */}
-                {pendingPush && (
-                    <motion.div
-                        key="push-banner"
-                        initial={{ opacity: 0, y: -100 }}
-                        animate={{ opacity: 1, y: 16 }}
-                        exit={{ opacity: 0, y: -100 }}
-                        onClick={() => {
-                            startNewSession([
-                                { type: 'user', content: `我想聊聊“${pendingPush.blob.note}”这件事儿` },
-                                { type: 'ai', content: `我在听。看到你刚才记录了【${pendingPush.blob.label}】，那个瞬间现在感觉好些了吗？` }
-                            ]);
-                            setDiscussedIds(prev => new Set([...prev, pendingPush.id]));
-                            setPendingPush(null);
-                            setCurrentPage('chat');
-                        }}
-                        style={{
-                            position: 'absolute',
-                            top: '8px', left: '8px', right: '8px',
-                            background: 'rgba(255, 255, 255, 0.95)',
-                            backdropFilter: 'blur(10px)',
-                            padding: '12px 16px',
-                            borderRadius: '16px',
-                            boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
-                            display: 'flex',
-                            gap: '12px',
-                            alignItems: 'center',
-                            zIndex: 3000,
-                            cursor: 'pointer',
-                            border: '1px solid rgba(0,0,0,0.05)'
-                        }}
-                    >
-                        <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: 'linear-gradient(135deg, #A78BFA, #818CF8)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white' }}>
-                            <Bell size={20} />
-                        </div>
-                        <div style={{ flex: 1 }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <span style={{ fontSize: '12px', fontWeight: 600, color: '#1F2937' }}>{pendingPush.title}</span>
-                                <span style={{ fontSize: '10px', color: '#9CA3AF' }}>现在</span>
-                            </div>
-                            <p style={{ fontSize: '13px', color: '#4B5563', marginTop: '2px', lineHeight: 1.4 }}>{pendingPush.body}</p>
-                        </div>
-                        <X
-                            size={16}
-                            color="#9CA3AF"
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                setPendingPush(null);
-                            }}
-                        />
-                    </motion.div>
-                )}
+
 
                 {/* Report Drawer - Bottom up tray */}
                 {showReportDrawer && (

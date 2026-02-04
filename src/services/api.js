@@ -919,7 +919,9 @@ export const fetchChatSessions = async (limit = 10, beforeTime = null) => {
         const rawSessions = result.data?.sessions || result.data || result || [];
         const sessions = (Array.isArray(rawSessions) ? rawSessions : []).map(s => ({
             ...s,
-            messages: s.messages || []
+            messages: s.messages || [],
+            end_card_mode: s.end_card_mode || '',
+            end_card_text: s.end_card_text || ''
         }));
 
         return {
@@ -932,7 +934,31 @@ export const fetchChatSessions = async (limit = 10, beforeTime = null) => {
     }
 };
 
+
+/**
+ * End a chat session and get Enc Card
+ * @param {string} sessionId
+ */
+export const endChatSession = async (sessionId) => {
+    console.log(`[API] Ending session ${sessionId}...`);
+    if (USE_MOCK) return { mode: 'TODO', text: 'Mock End Card' };
+
+    const response = await fetch(`${API_BASE_URL}/chat/sessions/${sessionId}/end`, {
+        method: 'POST',
+        headers: getHeaders()
+    });
+
+    if (!response.ok) {
+        await handleApiError(response);
+        throw new Error('End session failed');
+    }
+
+    const result = await response.json();
+    return result.data; // { mode: "TODO" | "NUDGE", text: "..." }
+};
+
 export default {
+
     fetchTimeline,
     fetchDailyStatus,
     login,
@@ -945,5 +971,6 @@ export default {
     streamChat,
     fetchChatSessions,
     fetchDailyEval,
+    endChatSession,
     setTokenExpiredCallback
 };
