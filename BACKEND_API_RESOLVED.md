@@ -409,6 +409,40 @@ Authorization: Bearer <token>
 
 ---
 
+### 2.5 触发情绪碎片总结（开发测试）
+
+**POST** `/emotion-blobs/trigger-daily-summary?from={from}&to={to}`
+
+直接触发对指定时间范围内有情绪碎片的用户生成每日总结并落库，与定时任务（每天 0 点）逻辑一致，用于开发阶段功能测试。需鉴权。
+
+| 参数  | 类型   | 必填 | 说明                        |
+|-------|--------|------|-----------------------------|
+| from  | string | 是   | 时间范围起点，RFC3339 格式  |
+| to    | string | 是   | 时间范围终点，RFC3339 格式，必须晚于 from |
+
+**成功响应**（200）
+
+```json
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "message": "ok"
+  }
+}
+```
+
+**错误响应**
+
+| 状态码 | 说明                                                         |
+|--------|--------------------------------------------------------------|
+| 400    | from and to required (RFC3339) / from: invalid RFC3339 / to: invalid RFC3339 / to must be after from |
+| 401    | unauthorized                                                 |
+| 405    | method not allowed                                           |
+| 500    | daily summary failed（执行总结过程出错）                     |
+
+---
+
 ## 3. 聊天（Chat）
 
 以下接口均需鉴权：`Authorization: Bearer <token>`。
