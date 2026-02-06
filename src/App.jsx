@@ -1300,13 +1300,13 @@ function App() {
         }
     };
 
-    // 每次会话更新或切换回聊天页时重置计时
+    // 每次会话更新、输入变化或切换回聊天页时重置计时
     useEffect(() => {
         resetInactivityTimer();
         return () => {
             if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
         };
-    }, [chatSessions, currentPage]);
+    }, [chatSessions, currentPage, chatInput, isVoiceActive]);
 
     // Initial History Load
     useEffect(() => {
@@ -2379,7 +2379,7 @@ function App() {
                                 const isDisabled = !currentActive || isTyping;
 
                                 return (
-                                    <div style={{ display: 'flex', justifyContent: 'center', padding: '12px 24px', zIndex: 40 }}>
+                                    <div style={{ display: 'flex', justifyContent: 'flex-start', padding: '12px 20px', zIndex: 40 }}>
                                         <button
                                             onClick={() => !isDisabled && handleEndSession()}
                                             disabled={isDisabled}
@@ -2414,7 +2414,7 @@ function App() {
                                                 e.target.style.transform = 'translateY(0)';
                                             }}
                                         >
-                                            {"✨ 今天先到这儿"}
+                                            {"✨ 先聊到这儿"}
                                         </button>
                                     </div>
                                 );
