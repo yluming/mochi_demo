@@ -121,9 +121,10 @@ const JarPhysics = ({ onSelect, height, blobs, newBlobIds, isArchive, isUnsealed
         if (!blobs) return;
 
         // Simple check to avoid infinite loops if 'blobs' prop reference changes but content is same
-        const prevIds = prevBlobsRef.current.map(b => b.id).join(',');
-        const currIds = blobs.map(b => b.id).join(',');
-        if (prevIds === currIds && prevBlobsRef.current.length === blobs.length) {
+        const prevSignature = prevBlobsRef.current.map(b => `${b.id}-${b.isDiscussed}`).join(',');
+        const currSignature = blobs.map(b => `${b.id}-${b.isDiscussed}`).join(',');
+
+        if (prevSignature === currSignature && prevBlobsRef.current.length === blobs.length) {
             return;
         }
         prevBlobsRef.current = blobs;
@@ -550,19 +551,41 @@ const JarPhysics = ({ onSelect, height, blobs, newBlobIds, isArchive, isUnsealed
     );
 };
 
+// Helper to ensure sessions are always sorted [Oldest -> Newest] (corresponds to Top -> Bottom in UI)
+const sortSessionsChronological = (sessions) => {
+    return [...sessions].sort((a, b) => {
+        const timeA = new Date(a.created_at || 0).getTime();
+        const timeB = new Date(b.created_at || 0).getTime();
+        if (timeA !== timeB) return timeA - timeB;
+        // Fallback to ID comparison if timestamps are identical
+        return String(a.id).localeCompare(String(b.id));
+    });
+};
+
 // --- App Component ---
 function App() {
+    const [isLoggedIn, setIsLoggedIn] = useState(false);
+    const [chatSessions, setChatSessions] = useState([]);
+    const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+    const [hasMoreHistory, setHasMoreHistory] = useState(true);
+    const [isTyping, setIsTyping] = useState(false);
+    const [isInitialHistoryLoaded, setIsInitialHistoryLoaded] = useState(false);
+    const chatSessionsCountRef = useRef(0);
+
     const [currentPage, setCurrentPage] = useState('home');
     const [selectedBlob, setSelectedBlob] = useState(null);
     const [selectedDate, setSelectedDate] = useState('today');
+    const [onboardingStep, setOnboardingStep] = useState(0); // 0: Welcome, 1: Expression, 2: Done
+    const [showLogin, setShowLogin] = useState(true);
+    const [phoneNumber, setPhoneNumber] = useState('');
+
     const dateRollerRef = useRef(null); // Ref for auto-scrolling to Today
 
     // API Data States
     const [timeline, setTimeline] = useState([]);
     const [dailyData, setDailyData] = useState(null);
-
-    const [onboardingStep, setOnboardingStep] = useState(0); // 0: Welcome, 1: Expression, 2: Done
     const [isOnboardingSaving, setIsOnboardingSaving] = useState(false);
+
     const [todayBlobs, setTodayBlobs] = useState(() => {
         // Hydrate from local storage to prevent data loss on refresh/nav
         try {
@@ -570,8 +593,8 @@ function App() {
             if (saved) {
                 const { date, blobs } = JSON.parse(saved);
                 // Simple check: Is it from "today" (Client time)?
-                // Note: unique ID check prevents duplicates against server data in currentData logic
-                const todayStr = new Date().toLocaleDateString();
+                // Use a stable ISO date for comparison to avoid locale issues
+                const todayStr = new Date().toISOString().split('T')[0];
                 if (date === todayStr) {
                     console.log('[App] Restored local blobs:', blobs.length);
                     return blobs;
@@ -583,12 +606,60 @@ function App() {
         return [];
     });
 
-    // Track if we are currently fetching an AI evaluation
+
+
+
     const [isEvaluating, setIsEvaluating] = useState(false);
+
+    // Periodic usage tracking (Buried point)
+    useEffect(() => {
+        if (!isLoggedIn) return;
+
+        console.log('[App] Starting usage tracking (5m interval)');
+        const interval = setInterval(() => {
+            // Report 5 minutes of usage
+            api.reportUsage(5).catch(() => { });
+        }, 5 * 60 * 1000);
+
+        return () => clearInterval(interval);
+    }, [isLoggedIn]);
+
+    // Fetch timeline when logged in
+    useEffect(() => {
+        if (isLoggedIn && timeline.length === 0) {
+            console.log('[App] Logged in detected, fetching timeline...');
+            api.fetchTimeline().then(setTimeline).catch(err => {
+                console.error('[App] Failed to fetch timeline:', err);
+                setTimeline([]);
+            });
+        }
+    }, [isLoggedIn, timeline.length]);
+
+    useEffect(() => {
+        chatSessionsCountRef.current = chatSessions.length;
+    }, [chatSessions.length]);
+
+    // Periodically check if the date has changed to clear stale local blobs (for long-running app)
+    useEffect(() => {
+        const interval = setInterval(() => {
+            const todayStr = new Date().toISOString().split('T')[0];
+            const saved = localStorage.getItem('mochi_local_blobs');
+            if (saved) {
+                try {
+                    const { date } = JSON.parse(saved);
+                    if (date !== todayStr) {
+                        console.log('[App] New ISO day detected, clearing local blobs');
+                        setTodayBlobs([]);
+                    }
+                } catch (e) { }
+            }
+        }, 60000); // Check every minute
+        return () => clearInterval(interval);
+    }, []);
 
     // Persist todayBlobs to local storage
     useEffect(() => {
-        const todayStr = new Date().toLocaleDateString();
+        const todayStr = new Date().toISOString().split('T')[0];
         localStorage.setItem('mochi_local_blobs', JSON.stringify({
             date: todayStr,
             blobs: todayBlobs
@@ -708,7 +779,7 @@ function App() {
     // Fetch Daily Data when selectedDate changes
     useEffect(() => {
         let isCancelled = false;
-        // Clear previous data to prevent leak/ghosting while loading new date
+        // Reset data immediately on date change to trigger skeleton
         setDailyData(null);
 
         api.fetchDailyStatus(selectedDate).then(data => {
@@ -716,6 +787,34 @@ function App() {
 
             // 1. Show blobs immediately (and any pre-generated summary if history)
             setDailyData(data);
+
+            // 2. Global Cleanup: Any blob returned by the server can be safely removed from local cache,
+            // even if it belongs to a different "day" (Fixes UTC midnight mismatch between 0-8 AM)
+            if (data.blobs && data.blobs.length > 0) {
+                const serverIds = new Set(data.blobs.map(b => String(b.id)));
+                setTodayBlobs(prev => {
+                    const filtered = prev.filter(tb => {
+                        // Priority 1: ID check
+                        const isDuplicateId = serverIds.has(String(tb.id));
+                        if (isDuplicateId) return false;
+
+                        // Priority 2: Precise Content Match for optimistic blobs
+                        const tbNoteTrimmed = (tb.note || "").trim();
+                        if (tbNoteTrimmed && tb.isOptimistic) {
+                            const hasContentMatch = data.blobs.some(sb => (sb.note || "").trim() === tbNoteTrimmed);
+                            if (hasContentMatch) return false;
+                        }
+
+                        return true;
+                    });
+
+                    if (filtered.length !== prev.length) {
+                        console.log(`[App] Cleared ${prev.length - filtered.length} blobs from local cache (found on server for ${selectedDate})`);
+                        return filtered;
+                    }
+                    return prev;
+                });
+            }
 
             const isToday = selectedDate === 'today';
             const hasBlobs = data.blobs && data.blobs.length > 0;
@@ -744,8 +843,9 @@ function App() {
             }
         }).catch(err => {
             if (!isCancelled) {
-                console.error(err);
-                setDailyData({ blobs: [], statusText: '暂无记录' });
+                console.error('[App] fetchDailyStatus failed:', err);
+                // Don't set dummy data like '暂无记录' here, as that breaks the Skeleton loading UI.
+                // Keeping dailyData as null allows showHeaderSkeleton to correctly show the pulsing skeleton.
             }
         });
 
@@ -776,35 +876,20 @@ function App() {
     const [pairingDevice, setPairingDevice] = useState(null); // Current device in setup flow
     const [onboardingInput, setOnboardingInput] = useState(''); // Textarea content for onboarding/manual
     const [entrySource, setEntrySource] = useState('手动记录'); // '手动记录', '对话提取', '录音记录'
-    const [isLoggedIn, setIsLoggedIn] = useState(() => {
-        const token = localStorage.getItem('mochi_token');
-        if (!token) return false;
-        // Strict check: if it's the old 'demo token' (with space) or 'demo_token' (with underscore), invalid it
-        if (token.trim() === 'demo token' || token.trim() === 'demo_token') {
-            console.warn('[Session] Detected legacy mock token on init, clearing...');
-            localStorage.removeItem('mochi_token');
-            return false;
-        }
-        return true;
-    });
-
-    // Fetch timeline when logged in
-    useEffect(() => {
-        if (isLoggedIn && timeline.length === 0) {
-            console.log('[App] Logged in detected, fetching timeline...');
-            api.fetchTimeline().then(setTimeline).catch(err => {
-                console.error('[App] Failed to fetch timeline:', err);
-                setTimeline([]);
-            });
-        }
-    }, [isLoggedIn]);
-    const [phoneNumber, setPhoneNumber] = useState('');
-    const [showLogin, setShowLogin] = useState(true);
     const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
-    const [discussedIds, setDiscussedIds] = useState(new Set());
+    const [discussedIds, setDiscussedIds] = useState(new Set()); // Kept for simple local tracking if needed, but primary source is backend
+
+    // Refetch data when returning to Home to sync discussed status
+    useEffect(() => {
+        if (currentPage === 'home' && isLoggedIn) {
+            console.log('[App] Returned to home, refreshing daily status...');
+            api.fetchDailyStatus('today').then(data => {
+                if (data) setDailyData(data);
+            }).catch(console.error);
+        }
+    }, [currentPage, isLoggedIn]);
 
     const [pendingDiscussion, setPendingDiscussion] = useState(null); // { blobId, note }
-    const [isInitialHistoryLoaded, setIsInitialHistoryLoaded] = useState(false);
 
     // 语音输入状态 (Global Voice State)
     const [isVoiceActive, setIsVoiceActive] = useState(false);
@@ -976,52 +1061,77 @@ function App() {
         }
     };
 
-    // 长按录音处理器 (Long-press handlers)
-    const micHandlers = (context, options = {}) => ({
-        onPointerDown: (e) => {
-            e.preventDefault();
-            isPointerDownRef.current = true;
-            // Start a timer. If held for 600ms, start recording.
-            longPressTimerRef.current = setTimeout(() => {
-                if (isPointerDownRef.current) {
+    // 录音触发处理器 (Mic Handlers)
+    // 默认使用 'toggle' (点击开启/关闭)，首页 FAB 使用 'long-press'
+    const micHandlers = (context, options = {}) => {
+        const mode = options.mode || 'toggle';
+
+        if (mode === 'long-press') {
+            return {
+                onPointerDown: (e) => {
+                    e.preventDefault();
+                    isPointerDownRef.current = true;
+                    // Start a timer. If held for 300ms, start recording.
+                    longPressTimerRef.current = setTimeout(() => {
+                        if (isPointerDownRef.current) {
+                            startVoice(context, options.freshStart || false);
+                            if (navigator.vibrate) navigator.vibrate(50);
+                            longPressTimerRef.current = null; // Mark as fired
+                        }
+                    }, 300); // Reduced delay to 300ms for more responsiveness
+                },
+                onPointerUp: (e) => {
+                    if (!isPointerDownRef.current) return;
+                    e.preventDefault();
+                    isPointerDownRef.current = false;
+
+                    // 1. If timer is still valid, it means we released BEFORE 300ms (Short click)
+                    if (longPressTimerRef.current) {
+                        clearTimeout(longPressTimerRef.current);
+                        longPressTimerRef.current = null;
+                        console.log('[App] Mic: Short press ignored in long-press mode.');
+                        if (options.onStop) options.onStop();
+                    }
+                    // 2. If timer fired, we already started voice, so now we stop it.
+                    else {
+                        stopVoice();
+                        if (options.onStop) options.onStop();
+                    }
+                },
+                onPointerLeave: (e) => {
+                    if (!isPointerDownRef.current) return;
+                    isPointerDownRef.current = false;
+
+                    if (longPressTimerRef.current) {
+                        clearTimeout(longPressTimerRef.current);
+                        longPressTimerRef.current = null;
+                    } else {
+                        stopVoice();
+                        if (options.onStop) options.onStop();
+                    }
+                },
+                onContextMenu: (e) => e.preventDefault(),
+            };
+        }
+
+        // Default: Toggle Mode
+        return {
+            onClick: (e) => {
+                e.preventDefault();
+                if (isVoiceActive && voiceContext === context) {
+                    console.log('[App] Mic Toggle: Stopping voice');
+                    stopVoice();
+                    if (options.onStop) options.onStop();
+                } else {
+                    console.log('[App] Mic Toggle: Starting voice');
+                    if (isVoiceActive) stopVoice();
                     startVoice(context, options.freshStart || false);
                     if (navigator.vibrate) navigator.vibrate(50);
-                    longPressTimerRef.current = null; // Mark as fired
                 }
-            }, 600);
-        },
-        onPointerUp: (e) => {
-            if (!isPointerDownRef.current) return;
-            e.preventDefault();
-            isPointerDownRef.current = false;
-
-            // 1. If timer is still valid, it means we released BEFORE 600ms (Short click)
-            if (longPressTimerRef.current) {
-                clearTimeout(longPressTimerRef.current); // Cancel the pending start
-                longPressTimerRef.current = null;
-                console.log('Short press detected, triggering manual entry.');
-                if (options.onStop) options.onStop(); // Trigger entry even on short click
-            }
-            // 2. If timer fired, we already started voice, so now we stop it.
-            else {
-                stopVoice();
-                if (options.onStop) options.onStop();
-            }
-        },
-        onPointerLeave: (e) => {
-            if (!isPointerDownRef.current) return; // Only handle leave if button was being pressed
-            isPointerDownRef.current = false;
-
-            if (longPressTimerRef.current) {
-                clearTimeout(longPressTimerRef.current);
-                longPressTimerRef.current = null;
-            } else {
-                stopVoice();
-                if (options.onStop) options.onStop();
-            }
-        },
-        onContextMenu: (e) => e.preventDefault(),
-    });
+            },
+            onContextMenu: (e) => e.preventDefault(),
+        };
+    };
 
     // 颜色配置表 (Emotion Colors) - 合并为 4 大类，绿色融入“治愈/清新”
     const EMOTION_COLORS = {
@@ -1056,13 +1166,24 @@ function App() {
         // To prevent "ghost balls" falling from the top, we must ensure each unique event 
         // only appears once in the list, even if it's currently in both todayBlobs and dailyData.
         const serverBlobs = dailyData?.blobs || [];
+
+        // Improve deduplication: 
+        // 1. Filter out local blobs that have the same ID as any server blob
+        // 2. Filter out local 'optimistic' blobs if they match a server blob's note/content (avoid dupes after sync)
         const localBlobs = (currentIsToday ? todayBlobs : []).filter(tb => {
             const tbNote = (tb.note || "").trim();
-            return !serverBlobs.some(sb =>
-                String(sb.id) === String(tb.id) ||
-                (tb.isOptimistic && (sb.note || "").trim() === tbNote)
-            );
+            // Check ID collision
+            const hasIdCollision = serverBlobs.some(sb => String(sb.id) === String(tb.id));
+            if (hasIdCollision) return false;
+
+            // Check content duplication for optimistic blobs
+            if (tb.isOptimistic) {
+                const hasContentDuplicate = serverBlobs.some(sb => (sb.note || "").trim() === tbNote);
+                if (hasContentDuplicate) return false;
+            }
+            return true;
         });
+
         const validBlobs = [...serverBlobs, ...localBlobs];
 
         // Extract display values from dailyData (or use defaults while loading)
@@ -1084,10 +1205,38 @@ function App() {
             moodCategory,
             blobs: validBlobs.map(b => ({
                 ...b,
-                isDiscussed: discussedIds.has(b.id)
+                // Server state is truth, but we overlay discussedIds for zero-latency UX.
+                isDiscussed: !!b.isDiscussed || discussedIds.has(String(b.id))
             }))
         };
     }, [dailyData, todayBlobs, currentIsToday, discussedIds]);
+
+    const hasShownFirstBlobCongratsRef = useRef(localStorage.getItem('mochi_first_blob_congrats') === 'true');
+
+    // --- First Fragment Congrats Logic (Centralized) ---
+    useEffect(() => {
+        // Trigger if:
+        // 1. Logged in
+        // 2. Haven't shown it before
+        // 3. User has at least one blob today
+        // 4. User has no historical data (excluding today in the timeline)
+        if (isLoggedIn && !hasShownFirstBlobCongratsRef.current && (currentData.blobs || []).length > 0) {
+            // Check if there is any historical data on other days
+            const hasHistory = timeline.some(item => item.id !== 'today' && item.hasData);
+
+            if (!hasHistory) {
+                console.log('[App] First fragment detected! Triggering celebratory popup.');
+                hasShownFirstBlobCongratsRef.current = true;
+                localStorage.setItem('mochi_first_blob_congrats', 'true');
+
+                // Show after a short delay for better UX (let the blob fall first)
+                const timer = setTimeout(() => {
+                    setShowTooltip(true);
+                }, 4000);
+                return () => clearTimeout(timer);
+            }
+        }
+    }, [isLoggedIn, currentData.blobs.length, timeline.length]);
 
     // Fix: Check the computed blobs (currentData.blobs) instead of just local todayBlobs
     // This ensures that if we have server data for today, we don't show the empty slate.
@@ -1126,15 +1275,14 @@ function App() {
 
     const [chatInput, setChatInput] = useState('');
     const [showEndCard, setShowEndCard] = useState(true); // Simulated: shows based on history
-    const [chatSessions, setChatSessions] = useState([]);
-    const [isLoadingHistory, setIsLoadingHistory] = useState(false);
-    const [hasMoreHistory, setHasMoreHistory] = useState(true);
-    const [isTyping, setIsTyping] = useState(false);
 
     const chatEndRef = useRef(null);
     const messagesEndRef = useRef(null);
     const inactivityTimerRef = useRef(null);
     const shouldAutoScrollRef = useRef(true); // Control auto-scroll behavior
+    const isAnyTypewriterActiveRef = useRef(false); // Global flag for scroll behavior sync
+    const activeTaskRef = useRef(0); // Sequence number for the current active chat task
+    const isProcessingRef = useRef(false); // Synchronous lock for handleSendMessage
 
     // --- 不活跃检测 (10分钟自动结项) ---
     const resetInactivityTimer = () => {
@@ -1167,7 +1315,7 @@ function App() {
                 setIsLoadingHistory(true);
                 try {
                     const data = await api.fetchChatSessions(10, null);
-                    if (data.sessions && data.sessions.length > 0) {
+                    if (data && data.sessions && data.sessions.length > 0) {
                         console.log(`[App] Initial sessions loaded: ${data.sessions.length}. Fetching messages...`);
                         // Populate each session with its messages
                         const sessionsWithMessages = await Promise.all(data.sessions.map(async (s) => {
@@ -1179,7 +1327,15 @@ function App() {
                                 return { ...s, messages: [] };
                             }
                         }));
-                        setChatSessions([...sessionsWithMessages].reverse());
+
+                        setChatSessions(prev => {
+                            // Merge and de-duplicate by ID
+                            const existingIds = new Set(prev.map(s => s.id));
+                            const newHistory = sessionsWithMessages.filter(s => !existingIds.has(s.id));
+
+                            // Combine and enforce chronological sort
+                            return sortSessionsChronological([...prev, ...newHistory]);
+                        });
                     }
                 } catch (e) {
                     console.error("Failed to load initial history", e);
@@ -1201,26 +1357,19 @@ function App() {
                 return;
             }
 
-            const scrollToBottom = () => {
-                messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-                // Fallback: manual scroll on container
+            const scrollToBottom = (behavior = 'smooth') => {
+                // For character-by-character typing, 'auto' feels much smoother and less jerky than 'smooth'
+                messagesEndRef.current?.scrollIntoView({ behavior, block: 'end' });
                 if (chatEndRef.current) {
                     chatEndRef.current.scrollTop = chatEndRef.current.scrollHeight;
                 }
             };
 
-            // Initial scroll
-            const timer1 = setTimeout(scrollToBottom, 50);
-            // Intermediate scroll (good for general transitions)
-            const timer2 = setTimeout(scrollToBottom, 300);
-            // Stronger scroll after animation definitely finishes (800ms for safety with springs)
-            const timer3 = setTimeout(scrollToBottom, 800);
+            // If we are typing or typewriter is active, use 'auto' (instant) for better performance and sync
+            const behavior = isTyping || isAnyTypewriterActiveRef.current ? 'auto' : 'smooth';
+            const timer = setTimeout(() => scrollToBottom(behavior), 50);
 
-            return () => {
-                clearTimeout(timer1);
-                clearTimeout(timer2);
-                clearTimeout(timer3);
-            };
+            return () => clearTimeout(timer);
         }
     }, [currentPage, chatSessions]);
 
@@ -1257,7 +1406,11 @@ function App() {
                         }
                     }));
                     // Prepend new sessions (reverse because backend returns Newest First, and we want Oldest at index 0)
-                    setChatSessions(prev => [...[...sessionsWithMessages].reverse(), ...prev]);
+                    setChatSessions(prev => {
+                        const existingIds = new Set(prev.map(s => s.id));
+                        const newHistory = sessionsWithMessages.filter(s => !existingIds.has(s.id));
+                        return sortSessionsChronological([...prev, ...newHistory]);
+                    });
 
                     // Restore scroll position after render
                     // We use setTimeout to allow React to commit the update
@@ -1289,37 +1442,34 @@ function App() {
 
             // 2. Auto-close previous active session if exists
             setChatSessions(prev => {
-                const lastSession = prev[prev.length - 1];
-                let sessionsToUpdate = [...prev];
+                const now = new Date().toISOString();
+                // 2. Identify and end orphans in background
+                const orphans = prev.filter(s => !s.is_ended);
+                setTimeout(() => {
+                    orphans.forEach(o => performEndSession(o.id));
+                }, 0);
 
-                if (lastSession && !lastSession.is_ended) {
-                    const summary = '这一段对话先放在这里,你今天已经很棒了。';
-                    const closedSession = {
-                        ...lastSession,
-                        is_ended: true,
-                        is_ended: true,
-                        // summary: summary, // Deprecated
-                        end_card_text: summary || '', // Allow empty string
-                        end_card_mode: 'NUDGE', // Default for auto-close
-                        updated_at: now.toISOString()
-                    };
-                    sessionsToUpdate[sessionsToUpdate.length - 1] = closedSession;
-                }
+                const updatedPrev = prev.map(s => s.is_ended ? s : {
+                    ...s,
+                    is_ended: true,
+                    updated_at: now,
+                    is_generating_card: true,
+                    end_card_text: ''
+                });
 
                 // Create the new session object based on API data
                 const newSession = {
                     ...sessionData,
-                    // Ensure messages array exists for frontend rendering
                     messages: initialMessages.map(m => ({
                         id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
                         chat_session_id: realSessionId,
                         type: m.type,
                         content: m.content,
-                        created_at: m.created_at || now.toISOString()
+                        created_at: m.created_at || now
                     }))
                 };
 
-                return [...sessionsToUpdate, newSession];
+                return sortSessionsChronological([...updatedPrev, newSession]);
             });
 
             return realSessionId;
@@ -1331,23 +1481,55 @@ function App() {
 
     // 切换到对话页时的自动引导 (Proactive Greeting) - 仅在没有历史记录时触发
     useEffect(() => {
-        if (currentPage === 'chat' && isInitialHistoryLoaded && chatSessions.length === 0) {
+        if (currentPage === 'chat' && isInitialHistoryLoaded && chatSessions.length === 0 && !pendingDiscussion) {
             // 稍作延迟，等页面切入动画完成
             const timer = setTimeout(() => {
-                startNewSession([
-                    { type: 'ai', content: '嗨！我是 Mochi。在这个安静的空间里，我会一直陪着你。今天过得怎么样？' }
-                ]);
-            }, 800);
+                // Final check via ref AND state to avoid race
+                if (chatSessionsCountRef.current === 0 && !isTyping) {
+                    console.log('[App] Proactive greeting triggered');
+                    startNewSession([
+                        { type: 'ai', content: '嗨！我是 Mochi。在这个安静的空间里，我会一直陪着你。今天过得怎么样？' }
+                    ]);
+                }
+            }, 1000); // Slightly more delay to allow history to settle
             return () => clearTimeout(timer);
         }
-    }, [currentPage, isInitialHistoryLoaded, chatSessions.length]);
+    }, [currentPage, isInitialHistoryLoaded, chatSessions.length, pendingDiscussion, isTyping]);
 
     const handleSendMessage = async (overrideText = null, overrideBlobId = null) => {
+        if (isProcessingRef.current) {
+            console.log('[App] handleSendMessage IGNORED (Lock Active)');
+            return;
+        }
+        isProcessingRef.current = true;
+        console.log('[App] handleSendMessage START');
+
         const textValue = (typeof overrideText === 'string') ? overrideText : chatInput;
-        if (!textValue.trim()) return;
+        if (!textValue.trim()) {
+            isProcessingRef.current = false;
+            return;
+        }
 
         // Identify currently active session (Newest-Last)
         let activeSession = [...chatSessions].reverse().find(s => !s.is_ended);
+
+        // STALE SESSION GUARD: If session is from a previous day, treat it as ended
+        if (activeSession) {
+            const isToday = isDateToday(activeSession.created_at);
+            if (!isToday) {
+                console.log('[App] Active session is stale (previous day). Forcing new session.');
+                activeSession = null; // This will trigger lazy creation below
+            }
+        }
+
+        const now = new Date().toISOString();
+        const userMsg = {
+            id: `msg_user_${Date.now()}`,
+            chat_session_id: activeSession?.id || 'pending',
+            type: 'user',
+            content: textValue,
+            created_at: now
+        };
 
         // 1. Lazy Creation: If no active session exists OR we're discussing a specific blob
         if (!activeSession || overrideBlobId) {
@@ -1365,19 +1547,31 @@ function App() {
                         : (sessionData.emotion_blob_ids || [])
                 };
 
-                // Add new session to state AND add the message in one go to avoid race conditions
-                const userMsg = {
-                    id: `msg_user_${Date.now()}`,
-                    chat_session_id: activeSession.id,
-                    type: 'user',
-                    content: textValue,
-                    created_at: new Date().toISOString()
-                };
+                setChatSessions(prev => {
+                    const mutexNow = new Date().toISOString();
+                    // 2. Identify and end orphans directly in state update for consistency
+                    const orphans = prev.filter(s => !s.is_ended);
+                    if (orphans.length > 0) {
+                        console.log(`[App] Cleaning up ${orphans.length} orphan sessions`);
+                        // Fire-and-forget API calls
+                        setTimeout(() => {
+                            orphans.forEach(o => performEndSession(o.id));
+                        }, 0);
+                    }
 
-                setChatSessions(prev => [...prev, {
-                    ...activeSession,
-                    messages: [userMsg]
-                }]);
+                    const updatedPrev = prev.map(s => s.is_ended ? s : {
+                        ...s,
+                        is_ended: true,
+                        updated_at: mutexNow,
+                        is_generating_card: true,
+                        end_card_text: ''
+                    });
+
+                    // Update the message's session ID since we just created it
+                    const finalUserMsg = { ...userMsg, chat_session_id: activeSession.id };
+
+                    return sortSessionsChronological([...updatedPrev, { ...activeSession, messages: [finalUserMsg] }]);
+                });
 
                 console.log('[App] New session created and message added:', activeSession.id);
             } catch (err) {
@@ -1387,60 +1581,139 @@ function App() {
             }
         } else {
             // 2. Existing Session: Add User Message
-            const userMsg = {
-                id: `msg_user_${Date.now()}`,
-                chat_session_id: activeSession.id,
-                type: 'user',
-                content: textValue,
-                created_at: new Date().toISOString()
-            };
-
-            setChatSessions(prev => prev.map(s =>
-                s.id === activeSession.id
-                    ? { ...s, messages: [...(s.messages || []), userMsg] }
-                    : s
-            ));
+            setChatSessions(prev => {
+                const mutexNow = new Date().toISOString();
+                // Match the ID and add message, while also forcing end on any OTHER orphans
+                const updated = prev.map(s => {
+                    if (String(s.id) === String(activeSession.id)) {
+                        const finalUserMsg = { ...userMsg, chat_session_id: s.id };
+                        return { ...s, messages: [...(s.messages || []), finalUserMsg] };
+                    }
+                    if (!s.is_ended) {
+                        return { ...s, is_ended: true, updated_at: mutexNow };
+                    }
+                    return s;
+                });
+                return sortSessionsChronological(updated);
+            });
         }
 
         const currentInput = textValue; // Capture current input
         if (typeof overrideText !== 'string') setChatInput('');
         setIsTyping(true); // Maintain typing indicator for connection
 
+        // Unique ID for this specific task execution (to manage isTyping safely)
+        const myTaskId = ++activeTaskRef.current;
+
+        // Message-isolated typewriter state
+        let myCharQueue = [];
+        let isMyTypewriterPlaying = false;
+        let streamDone = false;
+        let lastReceivedFullText = "";
+
+        const safeSetIsTyping = (val) => {
+            if (activeTaskRef.current === myTaskId) {
+                setIsTyping(val);
+            }
+        };
+
         try {
-            // 3. Prepare for Stream: unique ID for this AI response to avoid race conditions
+            // 3. Prepare for Stream: unique ID for this AI response
             const aiMsgId = `msg_ai_${Date.now()}_stream`;
+            // CRITICAL: Capture session ID to avoid stale closure
+            const targetSessionId = activeSession.id;
+            console.log(`[App] Starting stream task ${myTaskId} for session: ${targetSessionId}`);
 
-            await api.streamChat(activeSession.id, currentInput, activeSession.emotion_blob_ids || [], (chunk) => {
-                setChatSessions(prev => prev.map(s => {
-                    if (s.id !== activeSession.id) return s;
+            const processQueue = async () => {
+                if (isMyTypewriterPlaying) return;
+                isMyTypewriterPlaying = true;
+                isAnyTypewriterActiveRef.current = true;
 
-                    const messages = [...(s.messages || [])];
-                    const aiMsgIndex = messages.findIndex(m => m.id === aiMsgId);
-
-                    if (aiMsgIndex === -1) {
-                        setIsTyping(false);
-                        messages.push({
-                            id: aiMsgId,
-                            chat_session_id: s.id,
-                            type: 'ai',
-                            content: chunk,
-                            created_at: new Date().toISOString()
-                        });
-                    } else {
-                        const existingMsg = messages[aiMsgIndex];
-                        messages[aiMsgIndex] = {
-                            ...existingMsg,
-                            content: existingMsg.content + chunk
-                        };
+                while (true) {
+                    // Stop if a new task has superseded this one
+                    if (activeTaskRef.current !== myTaskId && streamDone && myCharQueue.length === 0) {
+                        break;
                     }
 
-                    return { ...s, messages };
-                }));
+                    if (myCharQueue.length > 0) {
+                        // If queue is getting long, take more characters at once to catch up
+                        const burstSize = myCharQueue.length > 50 ? 5 : (myCharQueue.length > 10 ? 2 : 1);
+                        const chars = myCharQueue.splice(0, burstSize).join('');
+
+                        setChatSessions(prev => {
+                            const updated = prev.map(s => {
+                                // Robust ID comparison: session ID can be string or number from different sources
+                                if (String(s.id) !== String(targetSessionId)) return s;
+
+                                const msgs = [...(s.messages || [])];
+                                const idx = msgs.findIndex(m => m.id === aiMsgId);
+                                if (idx === -1) {
+                                    console.log(`[App] Task ${myTaskId}: FIRST CHUNK received. Creating message ${aiMsgId} in session ${s.id}`);
+                                    safeSetIsTyping(false); // Hide global typing indicator once we have a bubble
+                                    msgs.push({
+                                        id: aiMsgId,
+                                        chat_session_id: s.id,
+                                        type: 'ai',
+                                        content: chars,
+                                        created_at: new Date().toISOString()
+                                    });
+                                } else {
+                                    msgs[idx] = { ...msgs[idx], content: msgs[idx].content + chars };
+                                }
+                                return { ...s, messages: msgs };
+                            });
+
+                            // Diagnostic: if no session matched, log it
+                            if (!updated.some(s => String(s.id) === String(targetSessionId))) {
+                                console.warn(`[App] Task ${myTaskId}: Typewriter FAILED to find session ${targetSessionId} to append content.`);
+                            }
+
+                            return updated;
+                        });
+
+                        // Adaptive delay
+                        const delay = myCharQueue.length > 20 ? 10 : 30;
+                        await new Promise(r => setTimeout(r, delay));
+                    } else if (streamDone) {
+                        break;
+                    } else {
+                        await new Promise(r => setTimeout(r, 100));
+                    }
+                }
+                isMyTypewriterPlaying = false;
+                if (activeTaskRef.current === myTaskId) isAnyTypewriterActiveRef.current = false;
+                safeSetIsTyping(false);
+            };
+
+            // Start processing queue
+            processQueue();
+
+            await api.streamChat(targetSessionId, currentInput, activeSession.emotion_blob_ids || [], (newContent) => {
+                console.log(`[App] Task ${myTaskId} Received Chunk:`, newContent);
+                // Determine if this is a delta or a full rewrite
+                let delta = "";
+                if (newContent.startsWith(lastReceivedFullText)) {
+                    delta = newContent.slice(lastReceivedFullText.length);
+                } else {
+                    // Backend is sending deltas directly (most common)
+                    delta = newContent;
+                }
+                lastReceivedFullText = newContent; // For next check
+
+                if (delta) {
+                    myCharQueue.push(...Array.from(delta));
+                    if (!isMyTypewriterPlaying) processQueue();
+                }
             });
+            streamDone = true;
         } catch (err) {
-            console.error('Streaming failed:', err);
-            setIsTyping(false);
-            // Optional: Add error message to chat
+            console.error(`Streaming task ${myTaskId} failed:`, err);
+            safeSetIsTyping(false);
+            isMyTypewriterPlaying = false;
+            if (activeTaskRef.current === myTaskId) isAnyTypewriterActiveRef.current = false;
+        } finally {
+            console.log(`[App] Task ${myTaskId} END`);
+            isProcessingRef.current = false;
         }
     };
 
@@ -1472,60 +1745,46 @@ function App() {
         console.log('[event-memory] extract after session end', session);
     };
 
-    const handleEndSession = async () => {
-        if (chatSessions.length === 0) return;
-        const lastSession = chatSessions[chatSessions.length - 1];
-        if (lastSession.is_ended) return;
+    const performEndSession = async (sessionId) => {
+        if (!sessionId) return;
 
-        // 1. Optimistic Update: Explicit "Generating" state
-        setChatSessions(prev => {
-            const current = prev[prev.length - 1];
-            if (!current || current.id !== lastSession.id) return prev;
-            const others = prev.slice(0, -1);
-            return [...others, {
-                ...current,
+        // Mark as ended locally first if not already
+        setChatSessions(prev => prev.map(s => {
+            if (s.id !== sessionId || s.is_ended) return s;
+            return {
+                ...s,
                 is_ended: true,
-                updated_at: new Date().toISOString(), // Immediate timestamp
-                is_generating_card: true, // Show loading UI
+                updated_at: new Date().toISOString(),
+                is_generating_card: true,
                 end_card_text: ''
-            }];
-        });
-
-        requestEventMemoryExtraction(lastSession);
+            };
+        }));
 
         try {
-            const res = await api.endChatSession(lastSession.id);
-            // 2. Success Update: Replace loading with actual content
-            setChatSessions(prev => {
-                const current = prev[prev.length - 1];
-                if (!current || current.id !== lastSession.id) return prev;
-                const others = prev.slice(0, -1);
-                return [...others, {
-                    ...current,
+            const res = await api.endChatSession(sessionId);
+            setChatSessions(prev => prev.map(s => {
+                if (s.id !== sessionId) return s;
+                return {
+                    ...s,
                     is_ended: true,
                     is_generating_card: false,
                     end_card_text: res.text || '',
                     end_card_mode: res.mode,
                     updated_at: new Date().toISOString()
-                }];
-            });
+                };
+            }));
         } catch (error) {
-            console.error('Failed to end session remote:', error);
-            // 3. Fallback: Stop loading, empty text (hidden)
-            setChatSessions(prev => {
-                const current = prev[prev.length - 1];
-                if (!current || current.id !== lastSession.id) return prev;
-                const others = prev.slice(0, -1);
-                return [...others, {
-                    ...current,
-                    is_ended: true,
-                    is_generating_card: false,
-                    end_card_text: '', // Hide if failed
-                    end_card_mode: 'NUDGE',
-                    updated_at: new Date().toISOString()
-                }];
-            });
+            console.error('[App] Failed to end session:', sessionId, error);
+            setChatSessions(prev => prev.map(s => {
+                if (s.id !== sessionId) return s;
+                return { ...s, is_generating_card: false };
+            }));
         }
+    };
+
+    const handleEndSession = () => {
+        const lastSession = [...chatSessions].reverse().find(s => !s.is_ended);
+        if (lastSession) performEndSession(lastSession.id);
     };
 
 
@@ -1586,6 +1845,12 @@ function App() {
                         console.log('[API] Saved successfully and categorized.');
                         setTodayBlobs(prev => [...prev, serverBlob]);
                         setNewBlobIds(prev => new Set(prev).add(serverBlob.id)); // Add manual one
+
+                        // Immediately fetch updated Eval/Status (covers "First Blob" case)
+                        api.fetchDailyStatus('today').then(data => {
+                            console.log('[App] Refreshed daily status with new Eval');
+                            setDailyData(data);
+                        });
                     }
                     setIsOnboardingSaving(false);
                     setOnboardingStep(2); // Success -> Step 2
@@ -1596,15 +1861,6 @@ function App() {
                     setIsOnboardingSaving(false);
                     alert("保存失败，请重试");
                 });
-
-            // 仅在真实没有碎片（无历史且今日无数据）时弹出恭喜弹窗
-            // 延迟 4 秒，因为现在要等后端返回后球掉落
-            if (todayBlobs.length === 0 && (!timeline || timeline.length === 0)) {
-                setTimeout(() => {
-                    setShowTooltip(true);
-                    setTimeout(() => setShowTooltip(false), 8000);
-                }, 4000);
-            }
         } else {
             setOnboardingStep(2);
             setOnboardingInput('');
@@ -1664,6 +1920,7 @@ function App() {
                                 if (phoneNumber.length >= 11) {
                                     api.login(phoneNumber).then((result) => {
                                         setIsLoggedIn(true);
+                                        api.reportLogin(); // 埋点：上报登录
                                         // Check local storage first (trusted on this device), then backend
                                         const hasOnboarded = localStorage.getItem('mochi_onboarded') === 'true';
 
@@ -1791,14 +2048,6 @@ function App() {
 
     return (
         <div className="app-container">
-            <div className="nav-mimic">
-                <span>9:41</span>
-                <div style={{ display: 'flex', gap: '6px' }}>
-                    <Signal size={14} />
-                    <Wifi size={14} />
-                    <Battery size={14} />
-                </div>
-            </div>
 
             <div className="page-wrapper">
                 <AnimatePresence mode="wait">
@@ -1947,7 +2196,7 @@ function App() {
                                     className={`home-fab ${isVoiceActive && voiceContext === 'onboarding' ? 'recording' : ''}`}
                                     whileHover={selectedDate === 'today' ? { scale: 1.05 } : {}}
                                     whileTap={selectedDate === 'today' ? { scale: 0.95 } : {}}
-                                    {...(selectedDate === 'today' ? micHandlers('onboarding', { freshStart: true, onStop: () => setOnboardingStep(1) }) : {})}
+                                    {...(selectedDate === 'today' ? micHandlers('onboarding', { mode: 'long-press', freshStart: true, onStop: () => setOnboardingStep(1) }) : {})}
                                     style={{
                                         background: isVoiceActive && voiceContext === 'onboarding'
                                             ? 'linear-gradient(135deg, #A78BFA, #818CF8)'
@@ -2076,7 +2325,7 @@ function App() {
                                                     </span>
                                                 </div>
                                             ))}
-                                            {session.is_ended && (
+                                            {session.is_ended && (session.messages || []).some(m => m.type === 'user') && (
                                                 <div>
                                                     <div className="saved-indicator" style={{ marginBottom: '0', marginTop: '16px' }}>
                                                         <div className="dot" />
@@ -2093,14 +2342,14 @@ function App() {
                                                             </div>
                                                         </div>
                                                     ) : (
-                                                        (session.end_card_text || session.summary) && (
-                                                            <div className="session-end-card" style={{ flexShrink: 0, marginTop: '12px' }}>
-                                                                <div className="end-card-shine" />
-                                                                <p style={{ fontSize: '14px', color: '#4B5563', lineHeight: '1.6', marginBottom: '0' }}>
-                                                                    {session.end_card_text || session.summary}
-                                                                </p>
-                                                            </div>
-                                                        )
+                                                        <div className="session-end-card" style={{ flexShrink: 0, marginTop: '12px' }}>
+                                                            <div className="end-card-shine" />
+                                                            <p style={{ fontSize: '14px', color: '#4B5563', lineHeight: '1.6', marginBottom: '0' }}>
+                                                                {(session.end_card_text && session.end_card_text.length > 0)
+                                                                    ? session.end_card_text
+                                                                    : (session.summary || "这次对话已经封存。Mochi 会一直在这儿陪着你。")}
+                                                            </p>
+                                                        </div>
                                                     )}
                                                 </div>
                                             )}
@@ -2124,57 +2373,75 @@ function App() {
                                 <div ref={messagesEndRef} style={{ height: '1px' }} />
                             </div>
 
-                            {/* "今天到这儿" Button - Outside of scrollable container */}
-                            <div style={{ display: 'flex', justifyContent: 'center', padding: '12px 24px', zIndex: 40 }}>
-                                <button
-                                    onClick={handleEndSession}
-                                    style={{
-                                        padding: '10px 18px',
-                                        borderRadius: '20px',
-                                        border: '1px solid rgba(167, 139, 250, 0.3)',
-                                        background: 'linear-gradient(135deg, rgba(167, 139, 250, 0.08), rgba(252, 165, 165, 0.05))',
-                                        color: '#6B7280',
-                                        fontSize: '13px',
-                                        fontWeight: 500,
-                                        letterSpacing: '0.3px',
-                                        boxShadow: '0 4px 12px rgba(167, 139, 250, 0.08)',
-                                        cursor: 'pointer',
-                                        transition: 'all 0.2s ease',
-                                        backdropFilter: 'blur(10px)',
-                                        WebkitBackdropFilter: 'blur(10px)'
-                                    }}
-                                    onMouseEnter={(e) => {
-                                        e.target.style.background = 'linear-gradient(135deg, rgba(167, 139, 250, 0.12), rgba(252, 165, 165, 0.08))';
-                                        e.target.style.boxShadow = '0 6px 16px rgba(167, 139, 250, 0.12)';
-                                        e.target.style.transform = 'translateY(-2px)';
-                                    }}
-                                    onMouseLeave={(e) => {
-                                        e.target.style.background = 'linear-gradient(135deg, rgba(167, 139, 250, 0.08), rgba(252, 165, 165, 0.05))';
-                                        e.target.style.boxShadow = '0 4px 12px rgba(167, 139, 250, 0.08)';
-                                        e.target.style.transform = 'translateY(0)';
-                                    }}
-                                >
-                                    {"✨ 今天先到这儿"}
-                                </button>
-                            </div>
+                            {/* "今天到这儿" Button - Enabled only when an active session exists and Mochi is silent */}
+                            {(() => {
+                                const currentActive = [...chatSessions].reverse().find(s => !s.is_ended);
+                                const isDisabled = !currentActive || isTyping;
+
+                                return (
+                                    <div style={{ display: 'flex', justifyContent: 'center', padding: '12px 24px', zIndex: 40 }}>
+                                        <button
+                                            onClick={() => !isDisabled && handleEndSession()}
+                                            disabled={isDisabled}
+                                            style={{
+                                                padding: '10px 18px',
+                                                borderRadius: '20px',
+                                                border: '1px solid rgba(167, 139, 250, 0.3)',
+                                                background: isDisabled
+                                                    ? 'rgba(229, 231, 235, 0.5)'
+                                                    : 'linear-gradient(135deg, rgba(167, 139, 250, 0.08), rgba(252, 165, 165, 0.05))',
+                                                color: isDisabled ? '#9CA3AF' : '#6B7280',
+                                                fontSize: '13px',
+                                                fontWeight: 500,
+                                                letterSpacing: '0.3px',
+                                                boxShadow: isDisabled ? 'none' : '0 4px 12px rgba(167, 139, 250, 0.08)',
+                                                cursor: isDisabled ? 'not-allowed' : 'pointer',
+                                                transition: 'all 0.2s ease',
+                                                backdropFilter: 'blur(10px)',
+                                                WebkitBackdropFilter: 'blur(10px)',
+                                                opacity: isDisabled ? 0.6 : 1
+                                            }}
+                                            onMouseEnter={(e) => {
+                                                if (isDisabled) return;
+                                                e.target.style.background = 'linear-gradient(135deg, rgba(167, 139, 250, 0.12), rgba(252, 165, 165, 0.08))';
+                                                e.target.style.boxShadow = '0 6px 16px rgba(167, 139, 250, 0.12)';
+                                                e.target.style.transform = 'translateY(-2px)';
+                                            }}
+                                            onMouseLeave={(e) => {
+                                                if (isDisabled) return;
+                                                e.target.style.background = 'linear-gradient(135deg, rgba(167, 139, 250, 0.08), rgba(252, 165, 165, 0.05))';
+                                                e.target.style.boxShadow = '0 4px 12px rgba(167, 139, 250, 0.08)';
+                                                e.target.style.transform = 'translateY(0)';
+                                            }}
+                                        >
+                                            {"✨ 今天先到这儿"}
+                                        </button>
+                                    </div>
+                                );
+                            })()}
 
                             {/* Input Container */}
-                            <div className="chat-input-container">
+                            <div className={`chat-input-container ${isTyping ? 'disabled' : ''}`}>
                                 <div
-                                    className={`voice-trigger chat ${isVoiceActive && voiceContext === 'chat' ? 'recording' : ''}`}
-                                    {...micHandlers('chat')}
+                                    className={`voice-trigger chat ${(isVoiceActive && voiceContext === 'chat') ? 'recording' : ''} ${isTyping ? 'disabled' : ''}`}
+                                    {...(!isTyping ? micHandlers('chat') : {})}
                                 >
                                     <Mic size={20} />
                                 </div>
                                 <input
-                                    placeholder="分享你的感受..."
+                                    placeholder={isTyping ? "Mochi 正在回复..." : "分享你的感受..."}
                                     value={chatInput}
+                                    disabled={isTyping}
                                     onChange={(e) => setChatInput(e.target.value)}
                                     onKeyDown={(e) => {
-                                        if (e.key === 'Enter') handleSendMessage();
+                                        if (e.key === 'Enter' && !isTyping) handleSendMessage();
                                     }}
                                 />
-                                <button className="send-button" onClick={() => handleSendMessage()}>
+                                <button
+                                    className={`send-button ${isTyping ? 'disabled' : ''}`}
+                                    onClick={() => !isTyping && handleSendMessage()}
+                                    disabled={isTyping}
+                                >
                                     <ChevronRight size={24} />
                                 </button>
                             </div>
@@ -2296,6 +2563,30 @@ function App() {
                                     <div className="stat-item"><div className="label">步数</div><div className="value">8.2k</div></div>
                                 </div>
                             </div>
+
+                            <button
+                                onClick={() => {
+                                    if (window.confirm('确定要清理缓存并更新 App 吗？将会重新加载页面。')) {
+                                        localStorage.clear();
+                                        sessionStorage.clear();
+                                        window.location.reload(true);
+                                    }
+                                }}
+                                style={{
+                                    width: 'calc(100% - 40px)',
+                                    margin: '12px 20px 32px 20px',
+                                    padding: '16px',
+                                    borderRadius: '16px',
+                                    border: '1px solid #FECACA',
+                                    background: '#FEF2F2',
+                                    color: '#EF4444',
+                                    fontSize: '15px',
+                                    fontWeight: 600,
+                                    cursor: 'pointer'
+                                }}
+                            >
+                                获取最新 app 更新
+                            </button>
                         </motion.div>
                     )}
                 </AnimatePresence>
@@ -2798,11 +3089,15 @@ function App() {
                                     <button className="action-btn primary" onClick={() => setShowReportDrawer(false)}>
                                         我知道了
                                     </button>
-                                    <button className="action-btn secondary" onClick={() => {
-                                        setShowReportDrawer(false);
-                                        setCurrentPage('chat');
-                                        startNewSession([{ type: 'user', content: '想听听你对我的近期总结' }]);
-                                    }}>
+                                    <button
+                                        className="action-btn secondary"
+                                        disabled={true}
+                                        onClick={() => {
+                                            setShowReportDrawer(false);
+                                            setCurrentPage('chat');
+                                            startNewSession([{ type: 'user', content: '想听听你对我的近期总结' }]);
+                                        }}
+                                    >
                                         和 Mochi 聊聊总结
                                     </button>
                                 </div>
