@@ -2379,39 +2379,36 @@ function App() {
                                 const isDisabled = !currentActive || isTyping;
 
                                 return (
-                                    <div style={{ display: 'flex', justifyContent: 'flex-start', padding: '12px 20px', zIndex: 40 }}>
+                                    <div style={{ display: 'flex', justifyContent: 'flex-start', padding: '8px 20px', zIndex: 40 }}>
                                         <button
                                             onClick={() => !isDisabled && handleEndSession()}
                                             disabled={isDisabled}
                                             style={{
-                                                padding: '10px 18px',
-                                                borderRadius: '20px',
-                                                border: '1px solid rgba(167, 139, 250, 0.3)',
+                                                padding: '6px 14px',
+                                                borderRadius: '16px',
+                                                border: 'none',
                                                 background: isDisabled
-                                                    ? 'rgba(229, 231, 235, 0.5)'
-                                                    : 'linear-gradient(135deg, rgba(167, 139, 250, 0.08), rgba(252, 165, 165, 0.05))',
-                                                color: isDisabled ? '#9CA3AF' : '#6B7280',
-                                                fontSize: '13px',
-                                                fontWeight: 500,
-                                                letterSpacing: '0.3px',
-                                                boxShadow: isDisabled ? 'none' : '0 4px 12px rgba(167, 139, 250, 0.08)',
-                                                cursor: isDisabled ? 'not-allowed' : 'pointer',
+                                                    ? 'transparent'
+                                                    : 'rgba(0, 0, 0, 0.03)',
+                                                color: isDisabled ? 'transparent' : '#9CA3AF',
+                                                fontSize: '12.5px',
+                                                fontWeight: 400,
+                                                letterSpacing: '0.2px',
+                                                boxShadow: 'none',
+                                                cursor: isDisabled ? 'default' : 'pointer',
                                                 transition: 'all 0.2s ease',
-                                                backdropFilter: 'blur(10px)',
-                                                WebkitBackdropFilter: 'blur(10px)',
-                                                opacity: isDisabled ? 0.6 : 1
+                                                opacity: isDisabled ? 0 : 1,
+                                                pointerEvents: isDisabled ? 'none' : 'auto'
                                             }}
                                             onMouseEnter={(e) => {
                                                 if (isDisabled) return;
-                                                e.target.style.background = 'linear-gradient(135deg, rgba(167, 139, 250, 0.12), rgba(252, 165, 165, 0.08))';
-                                                e.target.style.boxShadow = '0 6px 16px rgba(167, 139, 250, 0.12)';
-                                                e.target.style.transform = 'translateY(-2px)';
+                                                e.target.style.background = 'rgba(0, 0, 0, 0.06)';
+                                                e.target.style.color = '#6B7280';
                                             }}
                                             onMouseLeave={(e) => {
                                                 if (isDisabled) return;
-                                                e.target.style.background = 'linear-gradient(135deg, rgba(167, 139, 250, 0.08), rgba(252, 165, 165, 0.05))';
-                                                e.target.style.boxShadow = '0 4px 12px rgba(167, 139, 250, 0.08)';
-                                                e.target.style.transform = 'translateY(0)';
+                                                e.target.style.background = 'rgba(0, 0, 0, 0.03)';
+                                                e.target.style.color = '#9CA3AF';
                                             }}
                                         >
                                             {"✨ 先聊到这儿"}
