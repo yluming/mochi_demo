@@ -1351,27 +1351,37 @@ function App() {
     // Auto-scroll to bottom when chat opens or sessions change
     useEffect(() => {
         if (currentPage === 'chat') {
-            // Skip auto-scroll if we are loading history
+            const scrollToBottom = (behavior = 'smooth') => {
+                // Dual strategy for cross-browser reliability
+                messagesEndRef.current?.scrollIntoView({ behavior, block: 'end' });
+                if (chatEndRef.current) {
+                    chatEndRef.current.scrollTop = chatEndRef.current.scrollHeight;
+                    // Some mobile browsers need multiple attempts if content is still rendering
+                }
+            };
+
+            // Skip auto-scroll ONLY if specifically flagged by history loading
             if (!shouldAutoScrollRef.current) {
+                console.log('[App] Auto-scroll skipped (history loading)');
                 shouldAutoScrollRef.current = true; // Reset for next time
                 return;
             }
 
-            const scrollToBottom = (behavior = 'smooth') => {
-                // For character-by-character typing, 'auto' feels much smoother and less jerky than 'smooth'
-                messagesEndRef.current?.scrollIntoView({ behavior, block: 'end' });
-                if (chatEndRef.current) {
-                    chatEndRef.current.scrollTop = chatEndRef.current.scrollHeight;
-                }
-            };
-
             // If we are typing or typewriter is active, use 'auto' (instant) for better performance and sync
             const behavior = isTyping || isAnyTypewriterActiveRef.current ? 'auto' : 'smooth';
-            const timer = setTimeout(() => scrollToBottom(behavior), 50);
 
-            return () => clearTimeout(timer);
+            // Attempt 1: Fast (50ms)
+            const t1 = setTimeout(() => scrollToBottom(behavior), 50);
+
+            // Attempt 2: Late (150ms) - Covers cases where dynamic bubbles render slightly late
+            const t2 = setTimeout(() => scrollToBottom(behavior), 150);
+
+            return () => {
+                clearTimeout(t1);
+                clearTimeout(t2);
+            };
         }
-    }, [currentPage, chatSessions]);
+    }, [currentPage, chatSessions, isTyping]); // Also trigger on typing state change
 
     const handleChatScroll = async (e) => {
         const { scrollTop, scrollHeight } = e.currentTarget;
