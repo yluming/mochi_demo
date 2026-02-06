@@ -10,6 +10,7 @@ const USE_MOCK = false
     ;
 const API_BASE_URL = '/api';
 const DEMO_PASSWORD = 'User0'; // Hardcoded for demo integration
+let timelinePromise = null;
 
 // --- Helper for Mock Dates ---
 const getRelDate = (offsetDays) => {
@@ -256,86 +257,99 @@ if (typeof window !== 'undefined') {
  * @returns {Promise<Array>} List of timeline items
  */
 export const fetchTimeline = async () => {
-    if (USE_MOCK) {
-        // Return keys in chronological order (Oldest -> Newest aka Today)
-        const keys = ['day5', 'day4', 'day3', 'yesterday', 'today'];
-        return keys.map(key => {
-            const data = MOCK_DATA[key];
-            return {
-                id: data.id,
-                label: data.label,
-                fullDate: data.fullDate,
-                hasData: key === 'today' || (data.blobs && data.blobs.length > 0)
-            };
-        });
+    if (timelinePromise) {
+        console.log('[API] Returning existing timeline promise');
+        return timelinePromise;
     }
 
-    // Calculate date range: from 30 days ago to tomorrow (to include today)
-    const now = new Date();
-    const to = new Date(now);
-    to.setUTCHours(0, 0, 0, 0);
-    to.setUTCDate(to.getUTCDate() + 1); // Tomorrow UTC 00:00:00
+    timelinePromise = (async () => {
+        try {
+            if (USE_MOCK) {
+                // Return keys in chronological order (Oldest -> Newest aka Today)
+                const keys = ['day5', 'day4', 'day3', 'yesterday', 'today'];
+                return keys.map(key => {
+                    const data = MOCK_DATA[key];
+                    return {
+                        id: data.id,
+                        label: data.label,
+                        fullDate: data.fullDate,
+                        hasData: key === 'today' || (data.blobs && data.blobs.length > 0)
+                    };
+                });
+            }
 
-    const from = new Date(now);
-    from.setUTCHours(0, 0, 0, 0);
-    from.setUTCDate(from.getUTCDate() - 30); // 30 days ago UTC 00:00:00
+            // Calculate date range: from 30 days ago to tomorrow (to include today)
+            const now = new Date();
+            const to = new Date(now);
+            to.setUTCHours(0, 0, 0, 0);
+            to.setUTCDate(to.getUTCDate() + 1); // Tomorrow UTC 00:00:00
 
-    const params = new URLSearchParams({
-        from: from.toISOString(),
-        to: to.toISOString()
-    });
+            const from = new Date(now);
+            from.setUTCHours(0, 0, 0, 0);
+            from.setUTCDate(from.getUTCDate() - 30); // 30 days ago UTC 00:00:00
 
-    const response = await fetch(`${API_BASE_URL}/emotion-blobs/dates?${params}`, {
-        headers: getHeaders()
-    });
-    if (!response.ok) {
-        await handleApiError(response);
-        throw new Error('Failed to fetch timeline');
-    }
-    const result = await response.json();
-    const datesWithData = result.data || [];
+            const params = new URLSearchParams({
+                from: from.toISOString(),
+                to: to.toISOString()
+            });
 
-    console.log('[API] Dates with data from backend:', datesWithData);
+            const response = await fetch(`${API_BASE_URL}/emotion-blobs/dates?${params}`, {
+                headers: getHeaders()
+            });
+            if (!response.ok) {
+                await handleApiError(response);
+                throw new Error('Failed to fetch timeline');
+            }
+            const result = await response.json();
+            const datesWithData = result.data || [];
 
-    // Convert backend dates to timeline format
-    // IMPORTANT: Use UTC dates to avoid timezone issues
-    const currentTime = new Date();
-    const today = new Date(Date.UTC(currentTime.getFullYear(), currentTime.getMonth(), currentTime.getDate()));
+            console.log('[API] Dates with data from backend:', datesWithData);
 
-    // Create timeline items for the last 30 days (from oldest to newest)
-    const timeline = [];
-    for (let i = 29; i >= 0; i--) { // Start from 29 days ago, go to today (i=0)
-        const date = new Date(today);
-        date.setUTCDate(date.getUTCDate() - i);
-        const dateStr = date.toISOString();
-        const dateOnly = dateStr.split('T')[0]; // YYYY-MM-DD
+            // Convert backend dates to timeline format
+            // IMPORTANT: Use UTC dates to avoid timezone issues
+            const currentTime = new Date();
+            const today = new Date(Date.UTC(currentTime.getFullYear(), currentTime.getMonth(), currentTime.getDate()));
 
-        // Check if this date has data from backend
-        const hasData = datesWithData.some(d => d.startsWith(dateOnly));
+            // Create timeline items for the last 30 days (from oldest to newest)
+            const timeline = [];
+            for (let i = 29; i >= 0; i--) { // Start from 29 days ago, go to today (i=0)
+                const date = new Date(today);
+                date.setUTCDate(date.getUTCDate() - i);
+                const dateStr = date.toISOString();
+                const dateOnly = dateStr.split('T')[0]; // YYYY-MM-DD
 
-        let id, label;
-        if (i === 0) {
-            id = 'today';
-            label = 'Today';
-        } else if (i === 1) {
-            id = 'yesterday';
-            label = 'Yesterday';
-        } else {
-            id = `day${i + 1}`;
-            // Let the frontend handle the relative label (Mon 27, etc.)
-            label = `Day ${i + 1}`;
+                // Check if this date has data from backend
+                const hasData = datesWithData.some(d => d.startsWith(dateOnly));
+
+                let id, label;
+                if (i === 0) {
+                    id = 'today';
+                    label = 'Today';
+                } else if (i === 1) {
+                    id = 'yesterday';
+                    label = 'Yesterday';
+                } else {
+                    id = `day${i + 1}`;
+                    // Let the frontend handle the relative label (Mon 27, etc.)
+                    label = `Day ${i + 1}`;
+                }
+
+                timeline.push({
+                    id,
+                    label,
+                    fullDate: dateStr,
+                    hasData: i === 0 || hasData // Today always shows as having data
+                });
+            }
+
+            console.log('[API] Generated timeline:', timeline);
+            return timeline;
+        } finally {
+            timelinePromise = null;
         }
+    })();
 
-        timeline.push({
-            id,
-            label,
-            fullDate: dateStr,
-            hasData: i === 0 || hasData // Today always shows as having data
-        });
-    }
-
-    console.log('[API] Generated timeline:', timeline);
-    return timeline;
+    return timelinePromise;
 };
 
 /**
@@ -433,7 +447,9 @@ export const fetchDailyEval = async (dateId = 'today') => {
         if (timelineItem) {
             dateParam = timelineItem.fullDate;
         } else if (dateId === 'today') {
-            dateParam = new Date().toISOString(); // Fallback
+            const d = new Date();
+            d.setUTCHours(0, 0, 0, 0);
+            dateParam = d.toISOString();
         }
 
         console.log(`[API] Fetching eval for ${dateId} -> ${dateParam}`);
@@ -487,20 +503,14 @@ export const fetchDailyStatus = async (dateId) => {
 
     const isToday = dateId === 'today';
 
-    // Simplified: Only fetch blobs here. Eval is fired separately by the caller to decouple UI.
+    // 1. Fetch Blobs
     const blobsResponse = await fetch(`${API_BASE_URL}/emotion-blobs?${params}`, { headers: getHeaders() });
-    const evalData = null;
-
     if (!blobsResponse.ok) {
         await handleApiError(blobsResponse);
         throw new Error('Failed to fetch daily status');
     }
     const result = await blobsResponse.json();
 
-    // Handle various response structures:
-    // 1. { data: { blobs: [...] } } - Standard wrapper
-    // 2. { data: [...] } - Wrapper with direct array
-    // 3. [...] - Direct array (as seen in screenshot)
     let rawBlobs = [];
     if (Array.isArray(result)) {
         rawBlobs = result;
@@ -512,53 +522,105 @@ export const fetchDailyStatus = async (dateId) => {
     const blobs = rawBlobs.map(mapBackendBlob);
     console.log(`[API] Received ${blobs.length} blobs for ${dateId}`);
 
+    // 2. Determine if we should fetch Eval
+    let evalData = null;
+    if (isToday && blobs.length > 0) {
+        try {
+            const CACHE_KEY_TIME = 'mochi_eval_last_time';
+            const CACHE_KEY_DATA = 'mochi_eval_cached_data';
+            const COOLDOWN = 60 * 60 * 1000; // 1 Hour
+
+            const lastTime = parseInt(localStorage.getItem(CACHE_KEY_TIME) || '0');
+            const now = Date.now();
+            const timeDiff = now - lastTime;
+
+            // Check cache existence
+            const cachedStr = localStorage.getItem(CACHE_KEY_DATA);
+            const hasCache = !!cachedStr;
+
+            // Logic: 
+            // - If no cache (and has blobs), fetch immediately (User created first blob case covered).
+            // - If > 1hr, fetch.
+            // - Force refresh mechanism (optional, but good for "Creation" flow) could be added via arguments or just relying on "no cache" if we cleared it? 
+            // User case: "User created first blob" -> we likely haven't cached anything yet for today, or it was empty.
+            // If we want to force update on creation, the caller should clear the cache time? 
+            // Actually, simply: If cache exists AND < 1hr, use cache. Else fetch.
+
+            const shouldFetch = !hasCache || timeDiff > COOLDOWN;
+
+            if (shouldFetch) {
+                console.log(`[API] Fetching new Eval (Reason: ${!hasCache ? 'No Cache' : '>1hr Cooldown'})`);
+                evalData = await fetchDailyEval(dateId);
+
+                if (evalData) {
+                    // Update Cache
+                    localStorage.setItem(CACHE_KEY_TIME, now.toString());
+                    // Create a composite cache object? Or just the data.
+                    // Storing just data is fine.
+                    localStorage.setItem(CACHE_KEY_DATA, JSON.stringify(evalData));
+                } else if (hasCache) {
+                    // Fallback to cache if fetch fails but we had old one?
+                    console.warn('[API] Eval fetch failed, falling back to cache.');
+                    evalData = JSON.parse(cachedStr);
+                }
+            } else {
+                console.log(`[API] Using cached Eval (Refreshed ${Math.round(timeDiff / 60000)}m ago)`);
+                evalData = JSON.parse(cachedStr);
+            }
+        } catch (e) {
+            console.error('[API] Eval logic error:', e);
+        }
+    } else if (isToday && blobs.length === 0) {
+        // Clear cache if today has no blobs (e.g. user deleted all?)
+        // Or if it's empty state, we definitely don't show Eval.
+        // localStorage.removeItem('mochi_eval_cached_data'); // Optional: reset if empty
+        console.log('[API] No blobs today, skipping Eval.');
+    }
+
     const smartUI = generateSmartUI(blobs, isToday);
 
-    // 1. Override smartUI with backend daily summary if available (Old Format)
-    if (result.data?.dailySummary) {
-        const ds = result.data.dailySummary;
-        if (ds.events || ds.emotions) {
-            smartUI.statusText = ds.events || smartUI.statusText;
-            smartUI.whisper = ds.emotions || smartUI.whisper;
+    // 2. Handle Backend Summary (handles camelCase and snake_case)
+    const dailySummary = result.data?.dailySummary || result.data?.daily_summary || result.dailySummary || result.daily_summary;
+    const emotionsSum = dailySummary?.emotions || dailySummary?.emotions_summary;
+    const eventsSum = dailySummary?.events || dailySummary?.events_summary;
+
+    if (dailySummary) {
+        // Map to header if history mode (capsule text)
+        if (!isToday) {
+            if (eventsSum) smartUI.statusText = eventsSum;
+            if (emotionsSum) smartUI.whisper = emotionsSum;
         }
     }
 
-    // 2. Override with new Eval Data if available (New Format)
+    // 3. Override with new Eval Data if available (New Format - Today Only)
     if (evalData) {
         console.log('[API] Applying Eval Data:', evalData);
         if (evalData.mood_category) smartUI.moodCategory = evalData.mood_category;
         if (evalData.emoji) smartUI.emoji = evalData.emoji;
         if (evalData.status_text) smartUI.statusText = evalData.status_text;
-        // Note: 'reason' is ignored as per requirement
     }
 
-    // Cache-based Unread Logic (only for today)
+    // 4. Cache-based Unread Logic (only for today)
     if (isToday) {
         const unreadIds = getUnreadBlobIds();
-        console.log(`[API] Unread blob IDs from cache:`, unreadIds);
-
         blobs.forEach(b => {
-            // Mark as unread if ID is in cache
             b.isUnread = unreadIds.includes(String(b.id));
         });
-
-        // Clear cache after comparison
         clearUnreadBlobIds();
     }
 
-    // Construct the daily status object to match expected format
     return {
         id: dateId,
         label: timelineItem.label,
         fullDate: timelineItem.fullDate,
         emoji: smartUI.emoji,
         statusText: smartUI.statusText,
-        moodCategory: smartUI.moodCategory, // Pass through to frontend
+        moodCategory: smartUI.moodCategory,
         blobs: blobs,
         whisper: { text: smartUI.whisper },
         archiveLabel: dateId !== 'today' && blobs.length > 0 ? {
-            emotions: Array.from(new Set(blobs.map(b => `#${b.label}`))).slice(0, 3).join(' '),
-            events: blobs.map(b => b.label).slice(0, 3).join(' | ')
+            emotions: emotionsSum || Array.from(new Set(blobs.map(b => `#${b.label}`))).slice(0, 3).join(' '),
+            events: eventsSum || blobs.map(b => b.label).slice(0, 3).join(' | ')
         } : undefined
     };
 };
@@ -665,6 +727,70 @@ export const login = async (phoneNumber) => {
             // Re-throw other errors (500, Network, etc.)
             throw err;
         }
+    }
+};
+
+/**
+ * Fetch current user stats
+ * GET /user/stats
+ */
+export const fetchUserStats = async () => {
+    if (USE_MOCK) {
+        return {
+            login_count: 5,
+            usage_minutes: 30,
+            last_login_at: new Date().toISOString()
+        };
+    }
+    const response = await fetch(`${API_BASE_URL}/user/stats`, {
+        headers: getHeaders()
+    });
+    if (!response.ok) {
+        await handleApiError(response);
+        throw new Error('Failed to fetch user stats');
+    }
+    const result = await response.json();
+    return result.data;
+};
+
+/**
+ * Report user login (埋点)
+ * POST /user/stats/login
+ */
+export const reportLogin = async () => {
+    if (USE_MOCK) return;
+    try {
+        const response = await fetch(`${API_BASE_URL}/user/stats/login`, {
+            method: 'POST',
+            headers: getHeaders(),
+            body: JSON.stringify({})
+        });
+        if (!response.ok) {
+            console.warn('[API] Login report failed:', response.status);
+        }
+    } catch (e) {
+        console.error('[API] reportLogin error:', e);
+    }
+};
+
+/**
+ * Report usage duration (埋点)
+ * POST /user/stats/usage
+ * @param {number} minutes - Usage duration in minutes
+ */
+export const reportUsage = async (minutes) => {
+    if (USE_MOCK || minutes <= 0) return;
+    try {
+        const response = await fetch(`${API_BASE_URL}/user/stats/usage`, {
+            method: 'POST',
+            headers: getHeaders(),
+            body: JSON.stringify({ minutes })
+        });
+        if (!response.ok) {
+            console.warn('[API] Usage report failed:', response.status);
+        }
+    } catch (e) {
+        console.error('[API] reportUsage error:', e);
     }
 };
 
@@ -808,7 +934,6 @@ export const fetchSessionMessages = async (sessionId) => {
  * Enhanced streamChat to support Mochi backend format.
  * POST /chat/messages
  * @param {string} sessionId - Target session ID
- * @param {string} userMessage - Message text
  * @param {string[]} emotionBlobIds - Related blob IDs
  * @param {Function} onChunk - Callback for each tokens
  */
@@ -849,42 +974,40 @@ export const streamChat = async (sessionId, userMessage, emotionBlobIds = [], on
 
         while (true) {
             const { done, value } = await reader.read();
-            if (done) {
-                console.log('[API] Stream Reader: Done');
-                break;
-            }
+            if (done) break;
 
             const chunk = decoder.decode(value, { stream: true });
-            console.log('[API] Stream Raw Chunk Received:', chunk);
             buffer += chunk;
 
-            const lines = buffer.split('\n');
-            // Keep the last line in the buffer as it may be incomplete
-            buffer = lines.pop();
+            const lines = buffer.split(/\r?\n/);
+            buffer = lines.pop(); // Keep partial line for next chunk
 
             for (const line of lines) {
                 const trimmed = line.trim();
-                if (!trimmed) continue;
-                console.log('[API] SSE line:', trimmed);
+                if (!trimmed || !trimmed.startsWith('data:')) continue;
 
-                // Standard SSE format: "data: <json>" or "data:<json>"
-                if (trimmed.startsWith('data:')) {
-                    // Extract the part after "data:" (ignoring first space if exists)
-                    const dataPart = trimmed.slice(5).trimStart();
-                    if (!dataPart) continue;
+                const dataPart = trimmed.slice(5).trim();
+                if (!dataPart || dataPart === '[DONE]') continue;
 
-                    try {
-                        const json = JSON.parse(dataPart);
-                        if (json.content) {
-                            console.log('[API] SSE Triggering onChunk with content:', json.content);
-                            onChunk(json.content);
-                        }
-                    } catch (e) {
-                        console.warn('[API] SSE line parsing error:', e, 'Data:', dataPart);
+                try {
+                    const json = JSON.parse(dataPart);
+                    if (json.content) {
+                        await onChunk(json.content);
                     }
+                } catch (e) {
+                    console.warn('[API] SSE Parse Error:', e, 'Raw:', trimmed);
                 }
             }
         }
+
+        // Process final potential content if no trailing newline
+        if (buffer.trim().startsWith('data:')) {
+            try {
+                const json = JSON.parse(buffer.trim().slice(5).trim());
+                if (json.content) await onChunk(json.content);
+            } catch (e) { /* ignore */ }
+        }
+        console.log('[API] Stream Complete');
 
     } catch (err) {
         console.error('[API] Stream Error:', err);
@@ -961,16 +1084,17 @@ export default {
 
     fetchTimeline,
     fetchDailyStatus,
+    fetchDailyEval,
     login,
     register,
     createEmotionBlob,
     createChatSession,
     fetchSessionMessages,
     streamChat,
-    fetchSessionMessages,
-    streamChat,
     fetchChatSessions,
-    fetchDailyEval,
     endChatSession,
-    setTokenExpiredCallback
+    setTokenExpiredCallback,
+    fetchUserStats,
+    reportLogin,
+    reportUsage
 };

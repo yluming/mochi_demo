@@ -13,7 +13,9 @@
     --bg-body: #f3f4f6;
 
     /* Layout */
-    --safe-area-top: 44px;
+    --safe-area-top: env(safe-area-inset-top, 0px);
+    --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+    --header-height: calc(60px + var(--safe-area-top));
     --max-width: 430px;
 
     /* Gradients */
@@ -110,7 +112,7 @@ body {
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
     border-top: 1px solid rgba(0, 0, 0, 0.05);
-    padding: 8px 24px 20px;
+    padding: 8px 24px calc(12px + var(--safe-area-bottom));
     display: flex;
     justify-content: space-around;
     z-index: 100;
@@ -152,7 +154,7 @@ body {
 
 .home-header {
     background: var(--grad-header);
-    padding: 12px 24px 16px;
+    padding: calc(20px + var(--safe-area-top)) 24px 16px;
     border-bottom-left-radius: var(--radius-lg);
     border-bottom-right-radius: var(--radius-lg);
     border-bottom: 1px solid rgba(255, 255, 255, 0.6);
@@ -369,7 +371,7 @@ body {
 /* Chat UI Refinement */
 .chat-banner {
     position: absolute;
-    top: 16px;
+    top: calc(16px + var(--safe-area-top));
     left: 50%;
     transform: translateX(-50%);
     width: auto;
@@ -505,6 +507,12 @@ body {
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
     z-index: 50;
     margin: 0 20px 20px 20px;
+    transition: all 0.3s ease;
+}
+
+.chat-input-container.disabled {
+    background: rgba(243, 244, 246, 0.8);
+    opacity: 0.8;
 }
 
 .chat-input-container input {
@@ -515,6 +523,11 @@ body {
     font-size: 14px;
     color: #374151;
     padding-left: 36px;
+}
+
+.chat-input-container input:disabled {
+    color: #9CA3AF;
+    cursor: not-allowed;
 }
 
 .send-button {
@@ -528,6 +541,20 @@ body {
     align-items: center;
     justify-content: center;
     cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.send-button.disabled {
+    background: #E5E7EB;
+    color: #9CA3AF;
+    cursor: not-allowed;
+    transform: scale(0.95);
+}
+
+.voice-trigger.disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    pointer-events: none;
 }
 
 .device-card {
@@ -732,7 +759,7 @@ body {
 }
 
 .device-banner {
-    padding: 24px;
+    padding: calc(24px + var(--safe-area-top)) 24px 24px;
     background: linear-gradient(135deg, #818CF8, var(--primary), var(--secondary));
     border-bottom-left-radius: var(--radius-lg);
     border-bottom-right-radius: var(--radius-lg);
@@ -1489,4 +1516,11 @@ body {
 .action-btn.secondary {
     background: #F3F4F6;
     color: #4B5563;
+}
+
+.action-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    background: #E5E7EB;
+    color: #9CA3AF;
 }
